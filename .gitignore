@@ -1,0 +1,24 @@
+## [Visual Studio / .NET Core / C#]
+bin/
+bin_out/
+obj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+TestResults/
+
+## Visual Studio
+.vs/
+.idea/
+.vscode/
+
+## Test & temporary files (root level)
+/test_share/
+/shares/
+*.log
+/query
+/config.json
+!/config.example.json
+/dist/
+

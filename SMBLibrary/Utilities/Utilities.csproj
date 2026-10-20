@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <AssemblyName>Utilities</AssemblyName>
+    <RootNamespace>Utilities</RootNamespace>
+    <Copyright>Copyright © Tal Aloni 2005-2023</Copyright>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,38 @@
+{
+  "ListenPort": 445,
+  "Profile": "CameraCompatibility",
+  "EnableVerboseLog": true,
+  "AutoRestoreSystemServices": true,
+  "Shares": [
+    {
+      "ShareName": "camera",
+      "LocalPath": "shares/camera",
+      "IsReadOnly": false,
+      "AllowGuest": true,
+      "AllowedUsers": [],
+      "Description": "监控录像存储目录 (读写 / 支持匿名免密写入)"
+    },
+    {
+      "ShareName": "media",
+      "LocalPath": "shares/media",
+      "IsReadOnly": true,
+      "AllowGuest": true,
+      "AllowedUsers": [],
+      "Description": "影音媒体共享目录 (只读 / 4K流媒体高速播放)"
+    }
+  ],
+  "Users": [
+    {
+      "Username": "camera",
+      "Password": "123456",
+      "IsGuest": false,
+      "Description": "监控设备默认虚拟账户"
+    },
+    {
+      "Username": "guest",
+      "Password": "",
+      "IsGuest": true,
+      "Description": "来宾访客账户"
+    }
+  ]
+}

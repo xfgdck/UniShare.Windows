@@ -1,0 +1,195 @@
+<ui:FluentWindow x:Class="UniShare.UI.Views.AddShareDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
+        xmlns:local="clr-namespace:UniShare.UI"
+        Title="共享目录配置" Height="640" Width="580"
+        MinHeight="540" MinWidth="520"
+        WindowStartupLocation="CenterOwner"
+        ExtendsContentIntoTitleBar="True"
+        WindowBackdropType="Mica"
+        ShowInTaskbar="False">
+    <Grid>
+        <Grid.RowDefinitions>
+            <!-- 标题栏 -->
+            <RowDefinition Height="Auto"/>
+            <!-- 表单内容 -->
+            <RowDefinition Height="*"/>
+            <!-- 底部操作栏 -->
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- 顶栏：图标与标题紧贴最左侧 -->
+        <Grid Grid.Row="0">
+            <ui:TitleBar x:Name="TitleBarControl" ShowMaximize="False" ShowMinimize="False"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="14,0,0,0" IsHitTestVisible="False">
+                <Image Source="pack://application:,,,/Assets/icon.ico" Width="15" Height="15" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                <TextBlock x:Name="TxtHeader" Text="新建共享" FontWeight="Bold" FontSize="13" VerticalAlignment="Center"/>
+            </StackPanel>
+        </Grid>
+
+        <!-- 表单滚动区：将右侧边距拆分给内部 StackPanel，为滚动条预留独立外侧通道，避免遮挡卡片矩形框 -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Margin="20,6,4,12">
+            <StackPanel Margin="0,0,16,0">
+                <!-- 主区块 1：基本设置（核心必填项，视觉最突出） -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="18,16"
+                        Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="基础信息" FontSize="14" FontWeight="Bold" Margin="0,0,0,14"/>
+
+                        <!-- 本地文件夹 -->
+                        <StackPanel Margin="0,0,0,12">
+                            <TextBlock Text="本地文件夹" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,6"/>
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <ui:TextBox x:Name="TxtPath" Grid.Column="0" PlaceholderText="选择或输入要共享的文件夹路径..." TextChanged="TxtPath_TextChanged"/>
+                                <ui:Button Grid.Column="1" Content="浏览..." Appearance="Secondary" Padding="16,6" Margin="8,0,0,0" Click="BtnBrowse_Click"/>
+                            </Grid>
+                        </StackPanel>
+
+                        <!-- 共享名称 -->
+                        <StackPanel>
+                            <TextBlock Text="共享名称" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,6"/>
+                            <ui:TextBox x:Name="TxtShareName" PlaceholderText="局域网内显示的文件夹名称，例如 camera 或 media"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 主区块 2：访问权限（用户授权与匿名访问整合，主次清晰） -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="18,16"
+                        Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="访问权限" FontSize="14" FontWeight="Bold" Margin="0,0,0,12"/>
+
+                        <!-- 子项 A：账号访问 -->
+                        <TextBlock Text="授权用户" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,8"/>
+
+                        <!-- 添加用户栏 -->
+                        <Grid Margin="0,0,0,10">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="86"/>
+                                <ColumnDefinition Width="8"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <ui:TextBox x:Name="TxtNewUser" Grid.Column="0" PlaceholderText="用户名"/>
+                            <ui:PasswordBox x:Name="TxtNewPassword" Grid.Column="2" PlaceholderText="密码"/>
+                            <ComboBox x:Name="CmbNewUserPermission" Grid.Column="4">
+                                <ComboBoxItem Content="读写" IsSelected="True"/>
+                                <ComboBoxItem Content="只读"/>
+                            </ComboBox>
+                            <ui:Button Grid.Column="6" Content="添加用户" Appearance="Secondary" Padding="14,6" Click="BtnAddNewUser_Click"/>
+                        </Grid>
+
+                        <!-- 暂无用户提示 -->
+                        <Border x:Name="TxtNoUsersHint"
+                                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                                CornerRadius="6"
+                                Padding="12,8"
+                                Margin="0,0,0,10"
+                                Visibility="Collapsed">
+                            <TextBlock Text="暂未添加用户，请添加授权用户或在下方开启匿名访问"
+                                       Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                       FontSize="12"/>
+                        </Border>
+
+                        <!-- 已添加的用户列表 -->
+                        <ItemsControl x:Name="ItemsUserPermissions" Margin="0,0,0,4">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="12,7" Margin="0,0,0,6">
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <TextBlock Grid.Column="0" Text="{Binding Username}" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center" Margin="0,0,10,0" TextTrimming="CharacterEllipsis"/>
+
+                                            <ComboBox Grid.Column="1" SelectedIndex="{Binding AccessLevelIndex}" Width="86" Margin="0,0,8,0">
+                                                <ComboBoxItem Content="读写"/>
+                                                <ComboBoxItem Content="只读"/>
+                                            </ComboBox>
+
+                                            <ui:Button Grid.Column="2" Content="移除" Appearance="Secondary" Padding="10,4" Tag="{Binding}" Click="BtnDeleteUserFromItem_Click"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+
+                        <!-- 分隔线 -->
+                        <Border Height="1" Background="{DynamicResource CardStrokeColorDefaultBrush}" Margin="0,8,0,12"/>
+
+                        <!-- 子项 B：匿名访问 -->
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <CheckBox x:Name="ChkAllowGuest"
+                                      Grid.Column="0"
+                                      Content="允许匿名访问"
+                                      IsChecked="False"
+                                      VerticalAlignment="Center"
+                                      Checked="ChkAllowGuest_Changed"
+                                      Unchecked="ChkAllowGuest_Changed"/>
+
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <TextBlock Text="匿名权限" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+                                <ComboBox x:Name="CmbGuestPermission" Width="86">
+                                    <ComboBoxItem Content="读写" Tag="ReadWrite" IsSelected="True"/>
+                                    <ComboBoxItem Content="只读" Tag="ReadOnly"/>
+                                </ComboBox>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <!-- 次区块 3：协议兼容（可选高级项，置于底部弱化视觉权重） -->
+                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="8"
+                        Padding="18,14">
+                    <StackPanel>
+                        <TextBlock Text="协议兼容" FontSize="14" FontWeight="Bold" Margin="0,0,0,8"/>
+                        <CheckBox x:Name="ChkEnableSmb1" Content="启用 SMB 1.0 (兼容旧协议设备)" IsChecked="False" Margin="0,0,0,4"/>
+                        <TextBlock Text="现代协议 SMB 2.x / 3.x 已默认开启，为手机、电脑、智能电视等设备提供高速传输"
+                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
+                                   FontSize="11"
+                                   Margin="28,0,0,0"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <!-- 底部操作栏 -->
+        <Border Grid.Row="2"
+                Background="{DynamicResource SubtleFillColorSecondaryBrush}"
+                BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}"
+                BorderThickness="0,1,0,0"
+                Padding="20,12">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <ui:Button Content="取消" Appearance="Secondary" Width="92" Height="36" Margin="0,0,10,0" Click="BtnCancel_Click"/>
+                <ui:Button x:Name="BtnSave" Content="创建共享" Appearance="Primary" Width="108" Height="36" FontWeight="SemiBold" Click="BtnOk_Click"/>
+            </StackPanel>
+        </Border>
+    </Grid>
+</ui:FluentWindow>
