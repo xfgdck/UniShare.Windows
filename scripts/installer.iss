@@ -2,7 +2,7 @@
 #define MyAppName "UniShare"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "UniShare"
-#define MyAppURL "https://github.com/wangyg/UniShare.Windows"
+#define MyAppURL "https://github.com/xfgdck/UniShare.Windows"
 #define MyAppExeName "UniShare.exe"
 #define PublishDir "..\bin\publish-fdd"
 

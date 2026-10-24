@@ -1,66 +1,45 @@
+<div align="center">
+
 # UniShare
 
-**专为 Windows 打造的轻量级、零系统污染局域网文件共享工具**
+**简单、安全、稳定的 Windows 局域网文件共享（SMB）工具，告别繁琐配置与连接报错。**
 
-告别 Windows 系统自带共享繁琐的权限配置、账号污染与连接报错。通过 UniShare，只需简单几步即可将电脑上的文件夹安全、高速地共享给手机、平板、智能电视（Apple TV / 安卓电视）及其他电脑。
+[![GitHub release (latest by date)](https://img.shields.io/github/v/release/xfgdck/UniShare.Windows?color=blue&label=最新版本)](https://github.com/xfgdck/UniShare.Windows/releases)
+[![Downloads](https://img.shields.io/github/downloads/xfgdck/UniShare.Windows/total?color=success&label=总下载量)](https://github.com/xfgdck/UniShare.Windows/releases)
+[![Platform](https://img.shields.io/badge/平台-Windows_10%2F11_x64-brightgreen?logo=windows)](https://github.com/xfgdck/UniShare.Windows/releases)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 
----
+[**📥 下载最新安装包**](https://github.com/xfgdck/UniShare.Windows/releases) | [**🐛 反馈问题**](https://github.com/xfgdck/UniShare.Windows/issues)
 
-## 💡 为什么选择 UniShare？（对比 Windows 自带共享）
+</div>
 
-Windows 系统本身自带网络共享（`LanmanServer`），但原生共享主要是为企业域控（AD 域）环境设计的，在个人与家庭多设备互联中存在诸多痛点。UniShare 正是为此而生：
+### 主要特性
 
-| 对比维度 | Windows 原生文件共享 | UniShare 共享工具 |
-| :--- | :--- | :--- |
-| **账户体系与隐私** | 必须使用真实的 Windows 登录账户/微软账户，或在控制面板新建本地用户；容易暴露系统密码与隐私 | **纯用户态虚拟账户**，密码仅在软件内有效，绝不污染系统账户，无需暴露 Windows 登录凭据 |
-| **权限配置与报错** | 共享权限与 NTFS 安全权限两套重叠，常因权限冲突报 `0x80070005` 拒绝访问或来宾登录被拒 | **统一极简权限**，一键选择“可读写 / 仅读取 / 免密访问”，所见即所得，彻底告别权限配置地狱 |
-| **跨生态设备发现** | 偏向 Windows 体系，Mac、iPhone/iPad、Apple TV、安卓电视常搜不到电脑，必须手动查输 IP | **多维局域网自发现**（mDNS + WS-Discovery），各主流平台打开即可在设备列表自动发现本机 |
+- **虚拟账户**：独立设置共享账号与密码，无需暴露 Windows 系统账户与开机密码。
+- **稳定兼容**：智能适配多种安全认证协议，兼顾新老设备，彻底解决莫名连不上的问题。
+- **高速传输**：专为大文件与高清影音调优，局域网满速秒传，流畅直放 4K 原盘快进不卡顿。
+- **自动发现**：内置跨平台广播服务，手机、电视与电脑免输 IP，打开列表即可直接找到本机。
 
----
+### 应用截图
 
-## ✨ 功能特点
+![主界面](screenshot/main-page.png)
 
-* **简单直观**：现代化的清晰图形界面，三步完成共享配置，主界面直观展示本机局域网地址并支持一键复制。
-* **独立虚拟账号与权限**：支持为每个共享文件夹独立设置访问账号、密码及读写权限（可读写 / 仅读取 / 免密访问），安全隔离。
-* **现代高效传输与流畅串流**：默认开启现代 **SMB 2.x / 3.x** 协议栈，针对局域网大文件互传与 4K/8K 媒体流高频 Seek 解码深度调优，满足手机、平板、电脑及智能电视的高速访问需求。*(亦提供可选的 SMB 1.0 开关，仅供极少数老旧设备按需兜底)*。
-* **多维设备局域网自发现**：集成 **mDNS** 与 **WS-Discovery** 局域网自发现服务。iPhone/iPad（文件 App）、Mac（访达）、Apple TV（Infuse/VidHub）、安卓电视（Kodi/VLC）及其他 Windows 电脑均可免手动输入 IP，直接在设备列表自动扫描并识别本机。
-* **自动端口管理与零残留**：启动服务时自动无感接管文件共享所需的 445 端口，停止服务或退出软件时自动还原系统原有设置，安全纯净。
-* **安静后台运行**：支持免 UAC 弹窗开机自动启动，并支持最小化到系统托盘静默常驻运行。
+### 使用方法
 
----
+1. 前往 [Releases](https://github.com/xfgdck/UniShare.Windows/releases) 下载最新安装包并安装。
+2. 打开应用，点击「新建共享」，选择需要共享的本地文件夹，配置访问用户名、密码及权限。
+3. 点击右上角「启动服务」。
+4. 在其他设备（Android 手机、平板、安卓电视或电脑）上直接通过局域网自发现连接，或输入电脑 IP 地址访问：
+   - **Android 手机 / 平板**：在文件管理器或播放器中直接扫描或添加局域网服务器
+   - **安卓电视 / 电视盒子**：在 Kodi、VLC 等电视端播放器中自动扫描或连接
+   - **Windows 电脑**：在文件资源管理器地址栏输入 `\\<IP>\<共享名>`
 
-## 🚀 使用方法
+### 开发者与 AI 协作规范
 
-### 1. 启动共享服务
-打开 **UniShare**，点击主界面右上角的 **“启动服务”** 按钮。当状态指示灯变为绿色“正在运行”时，即可开始共享。
+- **工程架构、协议规范与协作规范**：详细系统架构、协议合规标准、开发准则与 AI 协作自检清单请阅读 [AGENT.md](AGENT.md)
 
-### 2. 新建共享文件夹
-1. 点击 **“新建共享”** 按钮。
-2. **选择文件夹**：浏览并选择电脑上需要共享的文件夹，确认共享名称。
-3. **设置访问权限**：输入允许访问的用户名和密码并点击“添加”（或开启“允许匿名访问”）。
-4. **保存生效**：点击“保存生效”完成创建。
+### 开源许可
 
-### 3. 在其他设备上连接
-在 UniShare 主界面顶部的 **“本机访问地址”** 处查看电脑的局域网 IP（例如 `192.168.1.100`），在其他设备上使用对应方式连接：
+本项目主程序基于 [GNU General Public License v3.0 (GPLv3)](LICENSE) 开源，内置底层 SMB 协议栈遵循 [GNU Lesser General Public License v3.0 (LGPLv3)](SMBLibrary/License.txt)。
 
-* **Windows 电脑**：打开文件资源管理器，在顶部地址栏输入 `\\192.168.1.100\共享名称` 并回车（或在“网络”中直接找到本机）。
-* **Mac 电脑**：打开“访达 (Finder)”，按 `Cmd + K`，输入 `smb://192.168.1.100/共享名称`（或在“网络”中直接点击本机）。
-* **手机 / 平板 / 智能电视**：在支持 SMB 的文件管理或媒体播放器 App 中直接搜索局域网设备，或添加网络服务器，输入用户名与密码即可畅享高速互传与影音播放。
-
----
-
-## ❓ 常见问题
-
-**Q：软件退出后会影响 Windows 自带的文件共享吗？**  
-A：不会。UniShare 停止服务或退出程序时，会自动恢复 Windows 原有的共享服务状态。
-
-**Q：如何设置开机自动启动并隐藏到后台？**  
-A：点击左侧菜单的 **“应用设置”**，开启 **“开机自动启动”** 和 **“启动时最小化到系统托盘”** 即可。
-
----
-
-## 📄 开源许可
-
-本项目主程序采用 [GNU General Public License v3.0 (GPLv3)](LICENSE) 开源协议。
-内置底层 SMB 协议栈基于 [SMBLibrary](https://github.com/TalAloni/SMBLibrary) 并针对现代多设备兼容性与微软官方标准进行了深度合规增强，源码位于 `SMBLibrary/` 目录，遵循 [GNU Lesser General Public License v3 (LGPLv3)](SMBLibrary/License.txt)。
 

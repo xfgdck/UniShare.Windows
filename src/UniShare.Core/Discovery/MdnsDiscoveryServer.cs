@@ -12,8 +12,8 @@ namespace UniShare.Core.Discovery
 {
     /// <summary>
     /// 基于 RFC 6762 (Multicast DNS) 与 RFC 6763 (DNS-SD) 的轻量级纯托管 mDNS 服务端。
-    /// 向局域网广播与响应 _smb._tcp.local 服务，让 macOS (访达)、iOS/iPadOS (文件)、
-    /// Apple TV (Infuse/VidHub) 以及 Android 智能电视 (Kodi/VLC) 等设备能自动发现当前主机。
+    /// 向局域网广播与响应 _smb._tcp.local 服务，让 Android 设备与安卓智能电视 (Kodi/VLC) 等能自动发现当前主机。
+
     /// </summary>
     public class MdnsDiscoveryServer : IDisposable
     {
@@ -105,7 +105,7 @@ namespace UniShare.Core.Discovery
             catch (Exception ex)
             {
                 m_isRunning = false;
-                Log($"启动 mDNS 服务失败: {ex.Message}，局域网苹果/安卓设备自发现可能受限。", "Warning");
+                Log($"启动 mDNS 服务失败: {ex.Message}，局域网安卓与电视设备自发现可能受限。", "Warning");
             }
         }
 
@@ -267,7 +267,7 @@ namespace UniShare.Core.Discovery
             WriteUInt16(ms, (ushort)m_smbPort); // Port
             ms.Write(hostTargetBytes, 0, hostTargetBytes.Length);
 
-            // 4. TXT 记录: <instance>._smb._tcp.local -> model=Mac (优化在苹果客户端中的图标展示)
+            // 4. TXT 记录: <instance>._smb._tcp.local
             WriteDnsName(ms, serviceInstance);
             WriteUInt16(ms, TypeTxt);
             WriteUInt16(ms, ClassInFlush);

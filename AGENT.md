@@ -10,7 +10,7 @@
 ### 1.1 项目定义
 * **项目名称**：UniShare (`UniShare.Windows`)
 * **解决方案入口**：[UniShare.sln](UniShare.sln)
-* **核心定位**：专为 Windows 10/11 打造的**独立、轻量级、零系统污染**的局域网 SMB 文件共享桌面应用。基于纯用户态协议栈与虚拟账户体系，彻底解决 Windows 原生共享（`LanmanServer`）账号污染、双重权限地狱、报错繁多以及跨生态设备（iOS/Android/Mac/TV）自发现困难等痛点，以现代 SMB 2.x/3.x 协议为主打，同时保留对旧设备的按需兼容支持。
+* **核心定位**：专为 Windows 10/11 打造的**独立、轻量级、零系统污染**的局域网 SMB 文件共享桌面应用。基于纯用户态协议栈与虚拟账户体系，彻底解决 Windows 原生共享（`LanmanServer`）账号污染、双重权限地狱、报错繁多以及局域网多设备（Android/Windows/安卓电视）自发现困难等痛点，以现代 SMB 2.x/3.x 协议为主打，同时保留对旧设备的按需兼容支持。
 
 ### 1.2 核心设计理念
 1. **现代高速协议主导与多端流媒体优化 (SMB 2.x / 3.x)**：
@@ -20,7 +20,7 @@
    * 绝不向 Windows 本地 SAM 数据库注册任何真实系统账户。
    * 每个共享目录维护独立的访问用户列表 (`List<ShareUserPermission>`) 及读写权限，并可独立控制是否允许匿名（Guest）访问。
 3. **多维局域网全生态自发现**：
-   * 集成 **mDNS (RFC 6762/6763)** 与 **WS-Discovery**，让 Apple 设备（访达、官方“文件”App、Infuse/VidHub）、Android 智能电视（Kodi/VLC）以及 Windows 资源管理器均可零配置免输 IP 自动发现。
+   * 集成 **mDNS (RFC 6762/6763)** 与 **WS-Discovery**，让 Android 设备、安卓智能电视（Kodi/VLC）以及 Windows 资源管理器均可零配置免输 IP 自动发现。
 4. **无感端口接管与无损还原**：
    * 启动服务时自动检测并释放被系统内核驱动占用的 TCP 445 端口；停止服务或退出应用时自动逆序恢复 Windows 原生 `LanmanServer` 服务链，不留系统残留。
 
@@ -128,7 +128,7 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
 
 #### 5. 局域网设备自发现广播机制 ([`Discovery/`](src/UniShare.Core/Discovery/))
 * **双栈广播协同**：在 [`NetworkDiscoveryService.cs`](src/UniShare.Core/Discovery/NetworkDiscoveryService.cs) 统一统筹管理 mDNS 与 WS-Discovery，伴随 SMB 服务生命周期自适应启停（支持在“设置”页动态开关）：
-  * **mDNS (`_smb._tcp.local`)**：基于 RFC 6762/6763 在 UDP 5353 多播组 `224.0.0.251` 广播 PTR、SRV、TXT 与 A 记录，服务于 macOS 访达、iOS/iPadOS 官方文件、Apple TV (Infuse/VidHub) 以及 Android 智能电视（Kodi/VLC 等），实现零配置免输入 IP 发现。停止时主动发送 TTL=0 Goodbye 包清空客户端缓存。
+  * **mDNS (`_smb._tcp.local`)**：基于 RFC 6762/6763 在 UDP 5353 多播组 `224.0.0.251` 广播 PTR、SRV、TXT 与 A 记录，服务于 Android 设备及安卓智能电视（Kodi/VLC 等），实现零配置免输入 IP 发现。停止时主动发送 TTL=0 Goodbye 包清空客户端缓存。
   * **WS-Discovery (`pub:Computer`)**：在 UDP 3702 多播组 `239.255.255.250` 监听并响应 Windows 资源管理器发起的 Probe 及 Resolve 探测，宣告 `pub:Computer` 与 `wsdp:Device`，使本机直接呈现在其他 Windows 电脑的“网络”邻居列表中。
 * **安全端口复用**：两套 UDP 监听均显式配置 `ReuseAddress = true`，安全兼容系统已有网络组件，并附带完善超时防护。
 

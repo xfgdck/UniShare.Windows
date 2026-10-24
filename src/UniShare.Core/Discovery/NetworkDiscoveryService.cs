@@ -7,7 +7,7 @@ namespace UniShare.Core.Discovery
     /// 协同运行三维立体自发现体系：
     /// 1. NetBIOS (NBNS / WINS / MS-BRWS)：服务于各类安防摄像头 (海康/大华/小米/萤石等 IPC/NVR) 及旧版 Linux/Samba 客户端；
     /// 2. WS-Discovery (UDP 3702 + TCP 5357 HTTP)：服务于 Windows 10/11 资源管理器网络邻居与现代局域网设备；
-    /// 3. mDNS (DNS-SD RFC 6762/6763)：服务于 Apple 生态 (Mac 访达、iPhone/iPad、Apple TV / Infuse) 与 Android TV。
+    /// 3. mDNS (DNS-SD RFC 6762/6763)：服务于 Android 移动端与安卓智能电视。
     /// </summary>
     public class NetworkDiscoveryService : IDisposable
     {
@@ -57,7 +57,7 @@ namespace UniShare.Core.Discovery
                     Log($"启动 NetBIOS 异常: {ex.Message}", "Warning");
                 }
 
-                // 2. 启动 mDNS 服务（服务于苹果、安卓电视等生态）
+                // 2. 启动 mDNS 服务（服务于安卓手机、平板与安卓电视等设备）
                 try
                 {
                     m_mdns = new MdnsDiscoveryServer(smbPort, (msg, sev) => Log(msg, sev));
@@ -80,7 +80,7 @@ namespace UniShare.Core.Discovery
                 }
 
                 m_isRunning = true;
-                Log("局域网设备自发现体系已就绪（摄像头 NetBIOS 发现、Windows 邻居、苹果生态均已激活）。");
+                Log("局域网设备自发现体系已就绪（摄像头 NetBIOS 发现、Windows 邻居、mDNS 自发现均已激活）。");
             }
         }
 
