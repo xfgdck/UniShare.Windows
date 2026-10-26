@@ -79,6 +79,13 @@ namespace UniShare.UI
             {
                 EnsureTrayIconRegistered();
 
+                if (!string.IsNullOrEmpty(ViewModel.StartupWarning))
+                {
+                    string warning = ViewModel.StartupWarning;
+                    ViewModel.StartupWarning = null;
+                    MessageDialog.ShowWarning(warning, "配置文件提示", owner: this);
+                }
+
                 if (!m_isInitializedPort)
                 {
                     m_isInitializedPort = true;
@@ -161,6 +168,13 @@ namespace UniShare.UI
 
         private void TrayExit_Click(object sender, RoutedEventArgs e)
         {
+            // 服务启停 / 端口接管进行中时退出，可能在系统服务还原的同时仍有新引擎绑定 445 端口
+            if (ViewModel.IsBusy)
+            {
+                MessageDialog.ShowInfo($"正在处理：{ViewModel.BusyMessage}\n请稍候完成后再退出程序。", "请稍候");
+                return;
+            }
+
             bool confirmed = MessageDialog.ShowConfirm(
                 "确定要退出 UniShare 吗？\n退出时将解除 445 端口绑定并还原 Windows 系统原生共享驱动。",
                 "退出确认",

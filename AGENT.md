@@ -61,9 +61,14 @@ UniShare.Windows/
     │   │   ├── NetBiosDiscoveryServer.cs # NetBIOS (NBNS) 响应器 (UDP 137，服务安防摄像头与旧设备)
     │   │   ├── NetworkDiscoveryService.cs # 自发现服务统筹生命周期管理
     │   │   └── DiscoveryHelper.cs      # 局域网有效 IPv4 地址过滤与提取
-    │   ├── ConfigManager.cs            # config.json 持久化读写与默认安全归一化
-    │   ├── SmbServerEngine.cs          # SMB 服务端生命周期、认证回调与细粒度目录权限拦截
-    │   └── PortHelper.cs               # TCP 445 端口占用诊断与三级内核驱动链安全接管/恢复
+    │   ├── ConfigManager.cs            # config.json 持久化（%ProgramData%\UniShare、ACL 收紧、DPAPI 加密密码、损坏自动备份恢复、旧版迁移）
+    │   ├── ShareAccessEvaluator.cs     # 纯逻辑权限判定、全局用户密码映射与同名冲突检测、SMB1 需求计算（单测覆盖）
+    │   ├── SmbServerEngine.cs          # SMB 服务端生命周期、认证回调、按共享名实时查询的权限拦截与热重载
+    │   ├── PortHelper.cs               # TCP 445 端口占用诊断、三级内核驱动链接管、系统 SMB 原始状态记录与按原样还原
+    │   ├── FirewallHelper.cs           # 防火墙入站放行规则（程序规则 + WSD 元数据端口，所有网络类型）
+    │   ├── DpapiHelper.cs              # DPAPI (LocalMachine) 加解密封装
+    │   └── CrashLogger.cs              # 未处理异常落盘 (%ProgramData%\UniShare\logs\crash.log)
+    ├── UniShare.Core.Tests\            # Core 单元测试 + 真实引擎端到端集成测试（高位端口，验证认证/权限/热重载）
     ├── UniShare.Server\                # 命令行无头宿主程序（供调试或控制台运行）
     │   └── Program.cs
     ├── UniShare.StressTest\            # 阶段四稳定性、4K流媒体Seek、海量小文件并发与内存/句柄压测工具
@@ -77,9 +82,8 @@ UniShare.Windows/
         │   ├── ClipboardHelper.cs      # Win32 底层重试与降级防崩溃剪贴板写入工具（杜绝 0x800401D0 崩溃）
         │   └── NetworkHelper.cs        # 网卡 IP 查询与展示工具
         ├── ViewModels\
-        │   ├── MainViewModel.cs        # 主界面状态、服务启停、共享增删改、445 端口自动化联动
-        │   ├── ShareItemViewModel.cs   # 单个共享卡片展示模型
-        │   ├── ObservableObject.cs     # INotifyPropertyChanged 基类
+        │   ├── MainViewModel.cs        # 主界面状态、服务启停（串行化）、共享增删改、445 端口联动、网络变化刷新
+        │   ├── ViewModelBase.cs        # INotifyPropertyChanged 基类
         │   └── RelayCommand.cs         # UI 线程直接调度的 ICommand 实现
         └── Views\
             ├── AddShareDialog.xaml/.cs # 新建/编辑共享弹窗（三段式卡片布局与完备防呆校验）
@@ -96,12 +100,13 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   3. `sc.exe stop srv2`
   4. `sc.exe stop srvnet`
   5. 轮询 `CanBindPort(445)` 确认端口真正释放。
-* **还原顺序 (`RestoreWindowsSharing`)**：
-  1. `sc.exe start srvnet`
-  2. `sc.exe start srv2`
-  3. `sc.exe config LanmanServer start= auto`
-  4. `sc.exe start LanmanServer`
-* **自动联动**：在 [`MainViewModel.cs`](src/UniShare.UI/ViewModels/MainViewModel.cs) 中，点击“启动服务”若发现 445 端口被占用会自动调用释放；点击“停止服务”或退出程序时，会自动调用还原。
+* **原始状态记录 (`CaptureSystemSmbState`)**：首次改动系统服务前，从注册表 `HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer` 读取 `Start` / `DelayedAutostart` 及当前运行状态，持久化到 `ServerConfig.SystemSmbBackup`（异常退出后仍保留，下次启动不会重复记录）。端口本就空闲时不改动、不记录、不还原。
+* **按原样还原 (`RestoreSystemSmb`)**：`sc config LanmanServer start= <原启动类型>`；仅当原本处于运行状态时才依次 `start srvnet / srv2 / LanmanServer`。原本禁用/停止的保持原样。还原后清空记录。
+* **生命周期联动**（[`MainViewModel.cs`](src/UniShare.UI/ViewModels/MainViewModel.cs)）：
+  * 软件启动即接管 445；“停止服务”**不还原**，445 由 `PortReservation` 继续持有，防止系统驱动重新夺取；
+  * 退出程序（托盘退出 / 注销关机 `OnExit`）以及致命未处理异常（`AppDomain.UnhandledException`）时还原；`ShutdownAndRestore` 幂等，仅首次生效；
+  * 卸载时安装包调用 `UniShare.exe --restore-system-smb`（无界面还原模式）按记录还原；
+  * 从旧版本升级（检测到安装目录旧配置迁移）且 LanmanServer 处于禁用时，视为旧版本遗留，按系统默认（自动+运行）还原。
 
 #### 2. 共享权限与防呆校验机制 ([`SmbServerEngine.cs`](src/UniShare.Core/SmbServerEngine.cs) & [`AddShareDialog.xaml.cs`](src/UniShare.UI/Views/AddShareDialog.xaml.cs))
 * **默认安全策略**：新建共享时默认 `AllowGuest = false`、`EnableSmb1 = false`。
@@ -109,13 +114,22 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   * 校验共享名称合法性与唯一性（禁止重名或相同物理路径重复挂载）。
   * 拦截“未点击添加按钮但用户名输入框仍有残留文本”的误操作，弹窗提醒用户先点击“添加”或清空输入框。
   * 禁止创建既没有添加任何访问用户、又未开启匿名访问的无权限共享。
+  * 共享名禁止 `" / \ [ ] : | < > + = ; , * ?` 及控制字符、长度 ≤ 80，禁止 `IPC$` / `ADMIN$` / `PRINT$` / `X$` 系统保留名；目录不存在时询问是否创建，共享整个磁盘分区时二次确认；添加空密码用户时提示 Windows 客户端默认拒绝空密码网络登录。
+  * **同名用户密码一致性**：NTLM 认证发生在 TreeConnect（选择共享）之前，同一用户名在所有共享中只能有一个密码。对话框通过 `ShareAccessEvaluator.FindPasswordConflict` 拦截同名不同密码；引擎遇到遗留冲突数据时保留首个密码并记录 Error 日志。
 * **运行时权限拦截 (`FileSystemShare.AccessRequested`)**：
-  * 根据当前登录用户名匹配该 `ShareConfig.Users` 中的独立权限或 `AllowGuest` 规则，精确放行读取 (`Read`) 或写入 (`Write`) 请求。
+  * 回调只携带共享名与挂载路径，每次请求都从引擎当前的 `m_activeShares` 表查询最新配置，再交给 `ShareAccessEvaluator.Evaluate` 判定。因此热重载后**已建立 TreeConnect 的旧连接也立即按新权限判定**；共享被移除或物理路径变更后，旧连接的访问一律拒绝。
+  * 认证回调 `GetUserPasswordHandler`：已知用户返回密码；未知用户返回 `null`——存在开放匿名的共享时由协议栈建立 Guest 会话（用户名 `Guest`，按各共享匿名权限判定），否则 `LOGON_FAILURE`。
   * `IsReadOnly` 属性根据用户列表和匿名开关的综合写权限自动计算，用于 UI 状态徽章展示。
+* **热重载与服务操作串行化**：引擎始终使用 `ConfigManager.Clone` 生成的配置快照；SMB 1.0 开关变化无法热重载（`ReloadConfig` 返回 false），自动改为重启服务。`MainViewModel` 中所有启动/停止/重启/热重载经 `SemaphoreSlim` 串行执行（`RunServiceOperationAsync`），忙碌期间的增删改共享会排队生效而不会被丢弃。引擎不再自动创建缺失的共享目录（移动硬盘未接入时跳过挂载并记录警告）。
 
-#### 3. 服务状态记忆与免 UAC 开机自启 ([`ConfigManager.cs`](src/UniShare.Core/ConfigManager.cs) & [`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs))
+#### 3. 配置存储、服务状态记忆与免 UAC 开机自启 ([`ConfigManager.cs`](src/UniShare.Core/ConfigManager.cs) & [`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs))
+* **配置位置与安全**：`%ProgramData%\UniShare\config.json`，目录 ACL 仅 SYSTEM 与 Administrators 可访问，所有者强制改为 Administrators（防止普通用户抢先创建目录后凭所有者身份改回 ACL），目录为符号链接/联接点时拒绝写入；密码无法解密（如配置复制自其他电脑）时置空并弹窗列出受影响用户，不会被当作配置损坏而重置；密码以 DPAPI (LocalMachine + 固定熵) 加密存为 `PasswordProtected`，内存中仍为明文 `Password`；写入采用临时文件原子替换。首次运行自动迁移安装目录下的旧版 `config.json` 并删除旧文件；旧版明文密码加载后立即加密重写。
+* **损坏恢复**：`LoadOrRecover` 读取失败时把原文件备份为 `config.json.corrupt-<时间>.bak` 并以默认配置启动，主窗口弹窗提示；未处理异常记录到 `%ProgramData%\UniShare\logs\crash.log`。
 * **运行状态持久化**：`ServerConfig.IsServiceEnabled` 记录用户最后一次是处于“启动”还是“停止”状态，软件重启后自动按上次状态恢复。
-* **任务计划自启**：因本程序需要 `requireAdministrator` 权限以管理 445 端口，普通注册表 `Run` 键自启会被 Windows 拦截。[`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs) 通过生成 UTF-16 XML 并调用 `schtasks /Create /TN "UniShare_AutoStart" /XML ... /F` 注册 `HighestAvailable` 登录触发任务，实现免 UAC 弹窗静默开机自启（支持传入 `--minimized` 直接驻留托盘）。
+* **任务计划自启**：因本程序需要 `requireAdministrator` 权限以管理 445 端口，普通注册表 `Run` 键自启会被 Windows 拦截。[`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs) 通过生成 UTF-16 XML 并调用 `schtasks /Create /TN "UniShare_AutoStart" /XML ... /F` 注册 `HighestAvailable` 登录触发任务，实现免 UAC 弹窗静默开机自启（支持传入 `--minimized` 直接驻留托盘）。触发器与 Principal 均指定当前用户 `UserId`，避免其他用户登录时误触发。
+* **防火墙**：系统“文件和打印机共享”规则只放行 System 进程，因此安装包与程序启动时（`FirewallHelper.EnsureRules`，路径不一致则重建）添加 `UniShare` 程序入站规则及 `UniShare WSD Metadata`（TCP 5357/5358/5359/8765，http.sys 承载）端口规则，作用于所有网络类型（域 / 专用 / 公用）。Windows 连接新网络时默认标记为“公用网络”，若只放行专用网络，家庭网络常被静默拦截，因此按产品决策不做区分；程序启动时会把旧版本创建的“仅专用 / 域”规则统一更新为所有网络类型。卸载时删除。
+* **网络变化**：订阅 `NetworkChange` 事件，合并 2 秒后刷新界面地址列表，并重启自发现服务以重新加入各网卡多播组、宣告新地址。引擎内自发现的启动、停止、开关与刷新由同一把锁串行化，保证服务停止后不会被延迟启动或刷新重新拉起。网卡地址查询带 5 秒缓存（网络变化时失效）。
+* **退出保护**：服务操作进行中时托盘“退出”会提示稍候，避免还原系统服务的同时仍有新引擎绑定 445。
 
 #### 4. UI 规范与细节约定
 * **去品牌化文案**：界面所有描述文本严禁出现特定硬件品牌名（如海康、萤石、小米、Mac 等），统一使用通用设备表述（如“手机、电脑、智能电视等设备”、“兼容旧协议设备”）。
@@ -130,7 +144,11 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
 * **双栈广播协同**：在 [`NetworkDiscoveryService.cs`](src/UniShare.Core/Discovery/NetworkDiscoveryService.cs) 统一统筹管理 mDNS 与 WS-Discovery，伴随 SMB 服务生命周期自适应启停（支持在“设置”页动态开关）：
   * **mDNS (`_smb._tcp.local`)**：基于 RFC 6762/6763 在 UDP 5353 多播组 `224.0.0.251` 广播 PTR、SRV、TXT 与 A 记录，服务于 Android 设备及安卓智能电视（Kodi/VLC 等），实现零配置免输入 IP 发现。停止时主动发送 TTL=0 Goodbye 包清空客户端缓存。
   * **WS-Discovery (`pub:Computer`)**：在 UDP 3702 多播组 `239.255.255.250` 监听并响应 Windows 资源管理器发起的 Probe 及 Resolve 探测，宣告 `pub:Computer` 与 `wsdp:Device`，使本机直接呈现在其他 Windows 电脑的“网络”邻居列表中。
-* **安全端口复用**：两套 UDP 监听均显式配置 `ReuseAddress = true`，安全兼容系统已有网络组件，并附带完善超时防护。
+  * **NetBIOS (UDP 137/138)**：仅对本机名的 `<00>`/`<20>` 名称查询作答，NBSTAT 响应通配名 `*` 与本机名；HostAnnouncement 按 RFC 1002 §4.4.1（14 字节数据报头含 DGM_LENGTH/PACKET_OFFSET）与 [MS-BRWS] 2.2.1（32 字节定长段，BrowserConfigVersion 0x0F/0x01）构造，SMB_COM_TRANSACTION 带 3 个 Setup 字（Mailslot Write），逐网卡向子网定向广播。
+* **多网卡**：三套服务均通过 `DiscoveryHelper.GetLocalInterfaceAddresses` 在每个有效网卡上加入多播组、逐网卡发送宣告（`MulticastInterface`），回复中的地址（mDNS A 记录、WSD XAddrs、NBNS 地址/MAC）按收到请求的网卡或请求方所在子网选择。
+* **mDNS 合规要点**：PTR 共享记录不设 cache-flush 位；QU 查询单播回复；源端口非 5353 的传统查询单播回复并回显 ID/问题段、TTL ≤ 10；同网卡多播回复间隔 ≥ 1 秒；TXT 为空串；支持 `_services._dns-sd._udp` 枚举；名称解析支持压缩指针。
+* **WS-Discovery 合规要点**：使用 XmlReader（禁用 DTD）解析 SOAP；Probe 仅在未指定 Types 或所有类型均属于 `wsdp:Device` / `pub:Computer` 且未指定 Scopes 时匹配（不再响应打印机、ONVIF 摄像头等探针）；多播 Probe 回复随机延迟 0~500ms；元数据 GetResponse 按请求使用的 WS-Addressing 版本回复。
+* **安全端口复用**：三套 UDP 监听均显式配置 `ReuseAddress = true`，安全兼容系统已有网络组件，并附带完善超时防护。
 
 #### 6. 长期稳定性实测与流媒体优化套件 ([`UniShare.StressTest`](src/UniShare.StressTest/Program.cs))
 * **4K/8K 媒体流 Seek 压测**：测试生成带确定性指纹的大文件，分配多线程进行高频随机 Seek + Range 读取，压测实测吞吐达 13,000+ MB/s，IOPS 达 34,000+ ops/sec，p99 延迟 < 1ms，校验错误为 0。
@@ -149,7 +167,9 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
 * **超轻量体积 (仅 ~4.3MB)**：采用框架依赖发布搭配 Inno Setup 6 `lzma2/ultra64` 固实压缩，相比百兆自包含方案下载体验极速。
 * **运行库智能补全与全流程进度指示**：安装向导通过 `FindFirst` 遍历 `%ProgramFiles%\dotnet\shared\Microsoft.WindowsDesktop.App\8.*` 及注册表探测目标机器运行库；若缺失，通过内置 `CreateDownloadPage` 自动拉取微软官方直链 (`aka.ms/dotnet/8.0/windowsdesktop-runtime-win-x64.exe`) 展示下载进度，下载完成后立即切换至 `CreateOutputProgressPage` 状态并以 `/passive /norestart` 弹出微软原生安装进度条窗口，全程无静止卡顿感。
 * **全程管理员权限与直接启动**：`PrivilegesRequired=admin` 结合 `InitializeSetup` 强校验管理员权限启动；安装结束前勾选“运行 UniShare”时通过 `runascurrentuser` 继承管理员上下文，避免权限降级或二次提权失败。
-* **无损卸载与系统保护**：控制面板卸载时自动清理计划任务自启动项，并主动逆序恢复系统原生 `LanmanServer` 服务，不留系统残留。
+* **运行库检测**：目录探测 `8.*` 之外，注册表回退仅在 `sharedfx\Microsoft.WindowsDesktop.App` 下存在 `8.` 开头的版本值时才视为已安装。
+* **防火墙**：安装时添加 / 卸载时删除 `UniShare` 与 `UniShare WSD Metadata` 入站规则（见第 3 节）。
+* **无损卸载与系统保护**：控制面板卸载时结束进程、清理计划任务自启动项，调用 `UniShare.exe --restore-system-smb` 按记录的原始状态还原系统共享服务，并删除防火墙规则。`%ProgramData%\UniShare` 下的配置（密码已加密）保留，便于重装后沿用。
 
 #### 9. 官方协议规范深度合规与自适应认证机制 ([`SMBLibrary/`](SMBLibrary/) & [`src/UniShare.Core/`](src/UniShare.Core/))
 * **[MS-SMB2] Section 3.3.5.3.2 & 2.2.4 (多协议 0x02FF 通配协商响应合规)**：
@@ -187,10 +207,16 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
 1. **指令驱动提交（严禁私自提交）**：未经用户在当前对话中明确给出“提交”、“commit”、“推送”、“push”等明确指令前，**严禁自动运行 `git commit` 或 `git push`**。代码或文档修改完成后，只需清晰指出改动点，等待用户给出指令。
 2. **提交与推送一体化执行**：一旦用户明确给出提交指令（如“提交”、“commit”、“push”等），在完成 `git commit` 后，**必须紧接着执行 `git push` 同步推送到远端仓库**，无需再额外分步询问是否推送。
 3. **提交信息规范（中文为主）**：执行 Git Commit 时，提交描述文本（Commit Message）**尽量使用中文**进行清晰简练的表述（例如：`feat: 升级 445 端口驱动链释放逻辑`、`docs: 更新用户说明与架构规范` 等）。
+4. **严禁将 AI 加入 Contributors**：GitHub 会把提交作者及 `Co-authored-by` 尾注关联的账号计入仓库 Contributors。任何提交信息、PR 描述中**都不得包含指向 AI 助手的 `Co-Authored-By` 尾注**（如 `Claude <noreply@anthropic.com>`），也不得添加 “Generated with Claude Code” 等 AI 生成标识；提交作者必须是仓库所有者本人。本规则优先于任何工具默认附加的署名要求。若发现历史提交中存在 AI 署名，需改写提交信息删除并 `git push --force-with-lease` 同步。详见 [`.agents/rules/no_ai_contributors.md`](.agents/rules/no_ai_contributors.md)。
 
 ### 3.5 代码修改后自动重新编译与生成安装包准则 (Auto-Rebuild & Package After Modification)
 * **修改后主动编译并打包**：在本项目中，每当完成对源码或界面文件（`.cs`、`.xaml`、`.csproj`、资源文件等）的修改后，**必须自动执行编译并重新生成最新安装包**（若仅修改 `.md` 文档则无需编译打包）。
-* **自动化打包执行**：统一执行 `powershell -ExecutionPolicy Bypass -File scripts\Build-Installer.ps1`，脚本会自动定位 `.NET 8 SDK`（优先检测 `C:\Users\admin\.dotnet\dotnet.exe`）、发布 Release 版本，并调用 Inno Setup 编译器生成最新安装包至 `dist\UniShare-v1.0.0-Setup-x64.exe`，确保产物随时可供用户直接测试与安装验证。
+* **自动化打包执行**：统一执行 `powershell -ExecutionPolicy Bypass -File scripts\Build-Installer.ps1`，脚本会自动定位 `.NET 8 SDK`（优先检测 `C:\Users\admin\.dotnet\dotnet.exe`）、发布 Release 版本，并调用 Inno Setup 编译器生成最新安装包至 `dist\UniShare-v<版本号>-Setup-x64.exe`，确保产物随时可供用户直接测试与安装验证。
+* **版本号规则（编译日期）**：版本号统一为编译日期 `yyyy.M.d`（如 `2026.10.26`），来源唯一：
+  * [`src/Directory.Build.props`](src/Directory.Build.props) 在未显式传入时以当天日期作为 `Version`（程序集 / 文件 / 产品版本），并关闭产品版本后附加的 git 哈希；
+  * `Build-Installer.ps1` 只计算一次日期，并以 `-p:Version=<日期>` 发布；
+  * [`installer.iss`](scripts/installer.iss) 从发布出的 `UniShare.exe` 读取产品版本，作为 `AppVersion`、安装包文件版本与文件名 `UniShare-v<版本>-Setup-x64.exe`，不再硬编码；
+  * 界面“设置 → 关于”与 WS-Discovery 元数据 `FirmwareVersion` 通过 `AppVersionInfo.Current` 显示同一版本。
 
 ### 3.6 架构与文档同步更新准则 (Keep AGENT.md Synchronized)
 * **代码或架构变更后必须同步更新 `AGENT.md`**：每当修改了核心业务逻辑、数据模型、模块职责、UI 结构、配置项或新增了关键特性后，**必须及时将变动同步更新到本 `AGENT.md` 文档中**，确保后续接手的 AI 助手能够准确理解最新代码结构与上下文，避免因文档滞后导致后续 AI 误判或写出冲突代码。
@@ -246,5 +272,14 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   * [x] **RFC 4178**：完善 SPNEGO negTokenInit 扩展与 DER 长度安全跳过，支持原生未包装 NegTokenInit。
   * [x] **OASIS WSDD 1.1**：WS-Discovery 支持 OASIS 2009/01 与 2005/04 双协议栈，Windows 资源管理器网络秒级互通。
   * [x] 补充官方规范合规性单元测试套件（`ProtocolStandardsComplianceTests.cs`），77 项测试 100% 通过。
+* [x] **阶段七：全面审查缺陷修复与健壮性加固 (已完成)**
+  * [x] 热重载对已连接客户端即时生效（按共享名实时查询权限，移除/改路径后拒绝旧连接）；SMB1 开关变化自动重启。
+  * [x] 未知用户在开放匿名时正确降级为 Guest 会话；同名用户跨共享密码冲突拦截与告警。
+  * [x] 系统 SMB 原始状态记录与按原样还原（含崩溃、卸载、旧版本升级场景）。
+  * [x] 防火墙规则、配置迁移至 ProgramData + ACL + DPAPI 加密、配置损坏自动恢复、全局异常日志。
+  * [x] NetBIOS 主机通告报文按 RFC 1002 / [MS-BRWS] 重构；mDNS 与 WS-Discovery 合规修正；多网卡逐网卡加入多播与按网段选址。
+  * [x] 网络变化自动刷新、服务操作串行化、共享名/路径/空密码校验、开机自启限定当前用户、安装包 .NET 检测修正。
+  * [x] 复查加固：配置目录所有者/联接点防护、密码解密失败提示、防火墙放行所有网络类型、自发现生命周期串行化、卸载还原兼容旧版升级、控制台宿主按原样还原。
+  * [x] 新增 `UniShare.Core.Tests`（28 项：权限判定、配置加解密与恢复、协议报文、真实引擎端到端集成测试）。
 
 

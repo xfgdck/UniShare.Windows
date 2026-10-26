@@ -5,8 +5,13 @@
 [CmdletBinding()]
 param(
     [string]$Configuration = "Release",
-    [string]$Version = "1.0.0"
+    # 版本号默认取编译日期 (yyyy.M.d)，程序与安装包共用同一个值
+    [string]$Version = ""
 )
+
+if ([string]::IsNullOrWhiteSpace($Version)) {
+    $Version = (Get-Date).ToString("yyyy.M.d", [System.Globalization.CultureInfo]::InvariantCulture)
+}
 
 $ErrorActionPreference = "Stop"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -78,7 +83,7 @@ if (Test-Path $publishDir) {
 }
 
 Write-Host "[3/4] Publishing UniShare.UI ($Configuration, win-x64)..." -ForegroundColor Yellow
-& $dotnetExe publish $projectPath -c $Configuration -r "win-x64" --self-contained false -o $publishDir
+& $dotnetExe publish $projectPath -c $Configuration -r "win-x64" --self-contained false -o $publishDir "-p:Version=$Version"
 if ($LASTEXITCODE -ne 0) {
     Write-Error "dotnet publish failed with exit code: $LASTEXITCODE"
     exit $LASTEXITCODE
@@ -93,7 +98,8 @@ if (-not (Test-Path $distDir)) {
     New-Item -ItemType Directory -Path $distDir -Force | Out-Null
 }
 
-& $isccExe "/Qp" "/DMyAppVersion=$Version" $issFile
+# 不再传入版本号：installer.iss 直接读取发布出的 UniShare.exe 产品版本，确保两者一致
+& $isccExe "/Qp" $issFile
 if ($LASTEXITCODE -ne 0) {
     Write-Error "Inno Setup compilation failed with exit code: $LASTEXITCODE"
     exit $LASTEXITCODE

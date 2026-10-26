@@ -29,7 +29,18 @@ namespace UniShare.Core.Models
     public class ShareUserConfig
     {
         public string Username { get; set; } = string.Empty;
+
+        /// <summary>
+        /// 明文密码（仅存在于内存中；保存到磁盘时置空并写入 PasswordProtected）
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string Password { get; set; } = string.Empty;
+
+        /// <summary>
+        /// DPAPI (LocalMachine) 加密后的 Base64 密码，仅用于磁盘持久化
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? PasswordProtected { get; set; }
         public ShareAccessLevel AccessLevel { get; set; } = ShareAccessLevel.ReadWrite;
     }
 
@@ -100,9 +111,16 @@ namespace UniShare.Core.Models
         public string Username { get; set; } = string.Empty;
 
         /// <summary>
-        /// 密码
+        /// 密码（仅存在于内存中；保存到磁盘时置空并写入 PasswordProtected）
         /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string Password { get; set; } = string.Empty;
+
+        /// <summary>
+        /// DPAPI (LocalMachine) 加密后的 Base64 密码，仅用于磁盘持久化
+        /// </summary>
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? PasswordProtected { get; set; }
 
         /// <summary>
         /// 是否为来宾账号
@@ -113,6 +131,24 @@ namespace UniShare.Core.Models
         /// 备注说明
         /// </summary>
         public string Description { get; set; } = string.Empty;
+    }
+
+    public class SystemSmbState
+    {
+        /// <summary>
+        /// LanmanServer 注册表 Start 值（2: 自动, 3: 手动, 4: 禁用）
+        /// </summary>
+        public int LanmanStartType { get; set; } = 2;
+
+        /// <summary>
+        /// 是否为“自动（延迟启动）”
+        /// </summary>
+        public bool LanmanDelayedAutoStart { get; set; }
+
+        /// <summary>
+        /// 停用前 LanmanServer 是否处于运行状态
+        /// </summary>
+        public bool WasRunning { get; set; } = true;
     }
 
     public class ServerConfig
@@ -161,6 +197,12 @@ namespace UniShare.Core.Models
         /// 是否启用局域网设备自发现（mDNS 与 WS-Discovery 广播）
         /// </summary>
         public bool EnableNetworkDiscovery { get; set; } = true;
+
+        /// <summary>
+        /// 本程序首次停用系统 SMB 前记录的 LanmanServer 原始状态（为 null 表示本程序当前未改动系统服务）。
+        /// 持久化保存，保证异常退出后下次启动或卸载时仍能按原样还原。
+        /// </summary>
+        public SystemSmbState? SystemSmbBackup { get; set; }
 
         /// <summary>
         /// 挂载的共享目录列表

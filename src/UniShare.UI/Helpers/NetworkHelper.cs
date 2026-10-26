@@ -54,6 +54,11 @@ namespace UniShare.UI.Helpers
                     {
                         if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
                         {
+                            // 排除链路本地地址 169.254.x.x（DHCP 未获取到地址时的临时地址，其他设备无法访问）
+                            byte[] bytes = addr.Address.GetAddressBytes();
+                            if (bytes[0] == 169 && bytes[1] == 254)
+                                continue;
+
                             results.Add(new NetworkInterfaceInfo
                             {
                                 Name = ni.Name,

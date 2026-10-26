@@ -1,15 +1,26 @@
 ; -- UniShare Inno Setup 6 安装向导脚本 --
 #define MyAppName "UniShare"
-#define MyAppVersion "1.0.0"
 #define MyAppPublisher "UniShare"
 #define MyAppURL "https://github.com/xfgdck/UniShare.Windows"
 #define MyAppExeName "UniShare.exe"
 #define PublishDir "..\bin\publish-fdd"
 
+; 版本号直接读取发布目录中 UniShare.exe 的产品版本（编译日期，如 2026.10.26），
+; 保证安装包名称、安装版本与程序版本始终一致
+#ifndef MyAppVersion
+  ; 版本资源字符串可能带有尾部空白 / NULL 填充，需去除
+  #define MyAppVersion Trim(GetStringFileInfo(AddBackslash(SourcePath) + PublishDir + "\" + MyAppExeName, "ProductVersion"))
+#endif
+#if MyAppVersion == ""
+  #error 无法从发布目录的 UniShare.exe 读取版本号，请先发布程序（运行 scripts\Build-Installer.ps1）
+#endif
+
 [Setup]
 AppId={{5A8D4971-893C-43D4-A76F-B9582A02C3F2}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
+VersionInfoProductVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
@@ -46,6 +57,11 @@ Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; 添加防火墙入站放行规则（所有网络类型）：系统自带“文件和打印机共享”规则只放行 System 进程，用户态 SMB 服务需单独放行
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""UniShare"""; Flags: runhidden waituntilterminated; StatusMsg: "正在配置防火墙规则..."
+Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""UniShare"" dir=in action=allow program=""{app}\{#MyAppExeName}"" enable=yes profile=any"; Flags: runhidden waituntilterminated; StatusMsg: "正在配置防火墙规则..."
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""UniShare WSD Metadata"""; Flags: runhidden waituntilterminated; StatusMsg: "正在配置防火墙规则..."
+Filename: "netsh.exe"; Parameters: "advfirewall firewall add rule name=""UniShare WSD Metadata"" dir=in action=allow protocol=TCP localport=5357,5358,5359,8765 enable=yes profile=any"; Flags: runhidden waituntilterminated; StatusMsg: "正在配置防火墙规则..."
 ; 完成安装后可选立即启动（继承安装程序当前的管理员权限，防止提权受阻或打开失败）
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent runascurrentuser
 
@@ -53,9 +69,11 @@ Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChang
 ; 卸载前结束进程并清理计划任务
 Filename: "taskkill.exe"; Parameters: "/F /IM {#MyAppExeName}"; Flags: runhidden; RunOnceId: "KillUniShareProcess"
 Filename: "schtasks.exe"; Parameters: "/Delete /TN ""UniShare_AutoStart"" /F"; Flags: runhidden; RunOnceId: "DelAutoStartTask"
-; 确保 Windows 系统原生共享服务恢复
-Filename: "sc.exe"; Parameters: "config LanmanServer start= auto"; Flags: runhidden; RunOnceId: "RestoreLanmanConfig"
-Filename: "sc.exe"; Parameters: "start LanmanServer"; Flags: runhidden; RunOnceId: "RestoreLanmanStart"
+; 按程序记录的原始状态还原 Windows 系统原生共享服务（原本禁用 / 停止的保持原样）
+Filename: "{app}\{#MyAppExeName}"; Parameters: "--restore-system-smb"; Flags: runhidden waituntilterminated; RunOnceId: "RestoreSystemSmb"
+; 移除防火墙放行规则
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""UniShare"""; Flags: runhidden; RunOnceId: "DelFirewallProgram"
+Filename: "netsh.exe"; Parameters: "advfirewall firewall delete rule name=""UniShare WSD Metadata"""; Flags: runhidden; RunOnceId: "DelFirewallWsd"
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"
@@ -70,6 +88,8 @@ function IsDotNet8DesktopRuntimeInstalled: Boolean;
 var
   FindRec: TFindRec;
   Path: String;
+  Versions: TArrayOfString;
+  I: Integer;
 begin
   Result := False;
   // 1. 优先检查 %ProgramFiles%\dotnet\shared\Microsoft.WindowsDesktop.App 是否存在 8.* 目录
@@ -89,11 +109,20 @@ begin
     end;
   end;
 
-  // 2. 检查 64位注册表 InstalledVersions 下的 sharedfx
+  // 2. 检查 64位注册表 InstalledVersions 下的 sharedfx 是否存在 8.* 版本（仅存在 6.0 等其他版本时不算已安装）
   if not Result then
   begin
-    if RegKeyExists(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App') then
-      Result := True;
+    if RegGetValueNames(HKLM64, 'SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedfx\Microsoft.WindowsDesktop.App', Versions) then
+    begin
+      for I := 0 to GetArrayLength(Versions) - 1 do
+      begin
+        if Copy(Versions[I], 1, 2) = '8.' then
+        begin
+          Result := True;
+          Break;
+        end;
+      end;
+    end;
   end;
 end;
 

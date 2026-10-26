@@ -1,32 +1,47 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
+using System.Security;
 using System.Text;
-using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Xml;
+using System.Xml.Linq;
 
 namespace UniShare.Core.Discovery
 {
     /// <summary>
     /// 轻量级纯托管 WS-Discovery 服务端 (Web Services Dynamic Discovery)。
-    /// 符合 WS-Discovery 2005/04 及 OASIS 标准：
-    /// 1. UDP 3702: 监听多播探针 (Probe) 与地址解析 (Resolve)，快速响应 ProbeMatches/ResolveMatches。
+    /// 符合 WS-Discovery 2005/04 及 OASIS WSDD 1.1 标准：
+    /// 1. UDP 3702: 在每个有效网卡上监听多播探针 (Probe) 与地址解析 (Resolve)，
+    ///    仅当探针类型匹配 wsdp:Device / pub:Computer（或未指定类型）时回复 ProbeMatches (OASIS WSDD 1.1 §5.3)，
+    ///    多播探针的回复随机延迟 0~500ms (APP_MAX_DELAY, §3.1.3)，XAddrs 使用与请求方同网段的本机地址。
     /// 2. TCP 5357: 提供轻量级 HTTP SOAP 元数据交换端点 (WS-Transfer Get)，
-    ///    向 Windows 资源管理器、安防摄像头及智能设备返回包含 FriendlyName、pub:Computer (主机名/工作组) 的设备元数据。
+    ///    向 Windows 资源管理器等返回包含 FriendlyName、pub:Computer (主机名/工作组) 的设备元数据。
     /// </summary>
     public class WsDiscoveryServer : IDisposable
     {
         private const string MulticastIPv4 = "239.255.255.250";
         private const int WsdUdpPort = 3702;
         private const int DefaultHttpPort = 5357;
+        private const int AppMaxDelayMs = 500;
+
+        private const string NsSoap = "http://www.w3.org/2003/05/soap-envelope";
+        private const string NsWsd2005 = "http://schemas.xmlsoap.org/ws/2005/04/discovery";
+        private const string NsWsdOasis = "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01";
+        private const string NsWsa2004 = "http://schemas.xmlsoap.org/ws/2004/08/addressing";
+        private const string NsWsa2005 = "http://www.w3.org/2005/08/addressing";
+        private const string NsDevProf = "http://schemas.xmlsoap.org/ws/2006/02/devprof";
+        private const string NsPub = "http://schemas.microsoft.com/windows/pub/2005/07";
 
         private readonly string m_deviceUuid;
         private readonly string m_instanceId;
         private readonly string m_machineName;
         private readonly string m_workgroup;
         private readonly Action<string, string>? m_logger;
+        private readonly object m_sendLock = new object();
         private int m_messageNumber = 1;
         private int m_httpPort = DefaultHttpPort;
 
@@ -56,6 +71,8 @@ namespace UniShare.Core.Discovery
             return new Guid(hash).ToString();
         }
 
+        private static string Escape(string value) => SecurityElement.Escape(value) ?? string.Empty;
+
         private void Log(string message, string severity = "Info")
         {
             m_logger?.Invoke(message, severity);
@@ -82,7 +99,7 @@ namespace UniShare.Core.Discovery
                 _ = Task.Run(() => ReceiveLoopAsync(m_cts.Token));
 
                 // 发送上线 Hello 宣告
-                _ = Task.Run(() => SendHelloAnnouncement());
+                _ = Task.Run(SendHelloAnnouncement);
             }
             catch (Exception ex)
             {
@@ -185,10 +202,11 @@ namespace UniShare.Core.Discovery
                 {
                     using var reader = new StreamReader(context.Request.InputStream, Encoding.UTF8);
                     string body = await reader.ReadToEndAsync();
-                    string msgId = ExtractMessageId(body);
+                    var request = ParseSoap(body);
 
-                    // 构造返回 WS-Transfer GetResponse 元数据 XML
-                    string responseXml = BuildMetadataGetResponseXml(msgId);
+                    // 按请求使用的 WS-Addressing 版本回复
+                    string wsaNs = request?.AddressingNamespace ?? NsWsa2004;
+                    string responseXml = BuildMetadataGetResponseXml(request?.MessageId ?? string.Empty, wsaNs);
                     byte[] bytes = Encoding.UTF8.GetBytes(responseXml);
 
                     context.Response.ContentType = "application/soap+xml; charset=utf-8";
@@ -208,46 +226,48 @@ namespace UniShare.Core.Discovery
             }
         }
 
-        private string BuildMetadataGetResponseXml(string relatesToMessageId)
+        private string BuildMetadataGetResponseXml(string relatesToMessageId, string wsaNs)
         {
             string msgId = Guid.NewGuid().ToString();
+            string anonTo = wsaNs == NsWsa2005 ? "http://www.w3.org/2005/08/addressing/anonymous" : "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous";
+            string machine = Escape(m_machineName);
             return $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://www.w3.org/2003/05/soap-envelope""
-               xmlns:wsa=""http://schemas.xmlsoap.org/ws/2004/08/addressing""
+<soap:Envelope xmlns:soap=""{NsSoap}""
+               xmlns:wsa=""{wsaNs}""
                xmlns:wsx=""http://schemas.xmlsoap.org/ws/2004/09/mex""
-               xmlns:wsdp=""http://schemas.xmlsoap.org/ws/2006/02/devprof""
-               xmlns:pub=""http://schemas.microsoft.com/windows/pub/2005/07"">
+               xmlns:wsdp=""{NsDevProf}""
+               xmlns:pub=""{NsPub}"">
   <soap:Header>
-    <wsa:To>http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous</wsa:To>
+    <wsa:To>{anonTo}</wsa:To>
     <wsa:Action>http://schemas.xmlsoap.org/ws/2004/09/transfer/GetResponse</wsa:Action>
     <wsa:MessageID>urn:uuid:{msgId}</wsa:MessageID>
-    {(string.IsNullOrEmpty(relatesToMessageId) ? "" : $"<wsa:RelatesTo>{relatesToMessageId}</wsa:RelatesTo>")}
+    {(string.IsNullOrEmpty(relatesToMessageId) ? "" : $"<wsa:RelatesTo>{Escape(relatesToMessageId)}</wsa:RelatesTo>")}
   </soap:Header>
   <soap:Body>
     <wsx:Metadata>
-      <wsx:MetadataSection Dialect=""http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisDevice"">
+      <wsx:MetadataSection Dialect=""{NsDevProf}/ThisDevice"">
         <wsdp:ThisDevice>
-          <wsdp:FriendlyName>UniShare ({m_machineName})</wsdp:FriendlyName>
-          <wsdp:FirmwareVersion>1.0</wsdp:FirmwareVersion>
+          <wsdp:FriendlyName>UniShare ({machine})</wsdp:FriendlyName>
+          <wsdp:FirmwareVersion>{Escape(AppVersionInfo.Current)}</wsdp:FirmwareVersion>
           <wsdp:SerialNumber>{m_deviceUuid}</wsdp:SerialNumber>
         </wsdp:ThisDevice>
       </wsx:MetadataSection>
-      <wsx:MetadataSection Dialect=""http://schemas.xmlsoap.org/ws/2006/02/devprof/ThisModel"">
+      <wsx:MetadataSection Dialect=""{NsDevProf}/ThisModel"">
         <wsdp:ThisModel>
           <wsdp:Manufacturer>UniShare</wsdp:Manufacturer>
           <wsdp:ModelName>UniShare File Server</wsdp:ModelName>
           <wsdp:ModelNumber>1.0</wsdp:ModelNumber>
         </wsdp:ThisModel>
       </wsx:MetadataSection>
-      <wsx:MetadataSection Dialect=""http://schemas.xmlsoap.org/ws/2006/02/devprof/Relationship"">
-        <wsdp:Relationship Type=""http://schemas.xmlsoap.org/ws/2006/02/devprof/host"">
+      <wsx:MetadataSection Dialect=""{NsDevProf}/Relationship"">
+        <wsdp:Relationship Type=""{NsDevProf}/host"">
           <wsdp:Host>
             <wsa:EndpointReference>
               <wsa:Address>urn:uuid:{m_deviceUuid}</wsa:Address>
             </wsa:EndpointReference>
             <wsdp:Types>pub:Computer</wsdp:Types>
             <wsdp:ServiceId>urn:uuid:{m_deviceUuid}</wsdp:ServiceId>
-            <pub:Computer>{m_machineName}/Workgroup:{m_workgroup}</pub:Computer>
+            <pub:Computer>{machine}/Workgroup:{Escape(m_workgroup)}</pub:Computer>
           </wsdp:Host>
         </wsdp:Relationship>
       </wsx:MetadataSection>
@@ -257,24 +277,120 @@ namespace UniShare.Core.Discovery
         }
         #endregion
 
+        #region SOAP 报文解析
+        internal sealed class SoapRequest
+        {
+            public string Action { get; set; } = string.Empty;
+            public string MessageId { get; set; } = string.Empty;
+            public string AddressingNamespace { get; set; } = NsWsa2004;
+            public XElement? BodyElement { get; set; }
+        }
+
+        internal static SoapRequest? ParseSoap(string xml)
+        {
+            try
+            {
+                var settings = new XmlReaderSettings { DtdProcessing = DtdProcessing.Prohibit, XmlResolver = null };
+                using var reader = XmlReader.Create(new StringReader(xml), settings);
+                var doc = XDocument.Load(reader);
+                var envelope = doc.Root;
+                if (envelope == null || envelope.Name.LocalName != "Envelope") return null;
+
+                var header = envelope.Elements().FirstOrDefault(e => e.Name.LocalName == "Header");
+                var body = envelope.Elements().FirstOrDefault(e => e.Name.LocalName == "Body");
+                var action = header?.Elements().FirstOrDefault(e => e.Name.LocalName == "Action");
+                var messageId = header?.Elements().FirstOrDefault(e => e.Name.LocalName == "MessageID");
+
+                return new SoapRequest
+                {
+                    Action = action?.Value.Trim() ?? string.Empty,
+                    MessageId = messageId?.Value.Trim() ?? string.Empty,
+                    AddressingNamespace = (action ?? messageId)?.Name.NamespaceName == NsWsa2005 ? NsWsa2005 : NsWsa2004,
+                    BodyElement = body?.Elements().FirstOrDefault()
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// 判断 Probe 是否匹配本设备 (OASIS WSDD 1.1 §5.1)：
+        /// Types 未指定或其中每个类型都属于本设备所声明的 {wsdp:Device, pub:Computer}；指定了 Scopes 时本设备不声明作用域，不匹配。
+        /// </summary>
+        internal static bool ProbeMatchesDevice(XElement probe)
+        {
+            var typesElement = probe.Elements().FirstOrDefault(e => e.Name.LocalName == "Types");
+            var scopesElement = probe.Elements().FirstOrDefault(e => e.Name.LocalName == "Scopes");
+            if (scopesElement != null && !string.IsNullOrWhiteSpace(scopesElement.Value))
+            {
+                return false;
+            }
+
+            if (typesElement == null || string.IsNullOrWhiteSpace(typesElement.Value))
+            {
+                return true;
+            }
+
+            foreach (string qname in typesElement.Value.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries))
+            {
+                string prefix = string.Empty;
+                string localName = qname;
+                int colon = qname.IndexOf(':');
+                if (colon >= 0)
+                {
+                    prefix = qname.Substring(0, colon);
+                    localName = qname.Substring(colon + 1);
+                }
+
+                XNamespace? ns = typesElement.GetNamespaceOfPrefix(prefix);
+                if (ns == null && prefix.Length == 0)
+                {
+                    ns = typesElement.GetDefaultNamespace();
+                }
+                string nsName = ns?.NamespaceName ?? string.Empty;
+
+                bool supported = (nsName == NsDevProf && localName == "Device") ||
+                                 (nsName == NsPub && localName == "Computer");
+                if (!supported)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+        #endregion
+
         #region UDP 3702 探测与解析
         private void StartUdpSocket()
         {
             m_socket = new Socket(AddressFamily.InterNetwork, SocketType.Dgram, ProtocolType.Udp);
             m_socket.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
             m_socket.Bind(new IPEndPoint(IPAddress.Any, WsdUdpPort));
+            m_socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 1);
 
-            // 加入 WS-Discovery IPv4 多播组
-            m_socket.SetSocketOption(
-                SocketOptionLevel.IP,
-                SocketOptionName.AddMembership,
-                new MulticastOption(IPAddress.Parse(MulticastIPv4), IPAddress.Any));
-            m_socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastTimeToLive, 4);
+            // 在每个有效网卡上分别加入 WS-Discovery IPv4 多播组
+            var group = IPAddress.Parse(MulticastIPv4);
+            int joined = 0;
+            foreach (var local in DiscoveryHelper.GetLocalInterfaceAddresses())
+            {
+                try
+                {
+                    m_socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, new MulticastOption(group, local.Address));
+                    joined++;
+                }
+                catch { }
+            }
+            if (joined == 0)
+            {
+                m_socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.AddMembership, new MulticastOption(group, IPAddress.Any));
+            }
         }
 
         private async Task ReceiveLoopAsync(CancellationToken ct)
         {
-            byte[] buffer = new byte[8192];
+            byte[] buffer = new byte[65536];
             EndPoint remoteEp = new IPEndPoint(IPAddress.Any, 0);
 
             while (!ct.IsCancellationRequested && m_socket != null)
@@ -283,11 +399,16 @@ namespace UniShare.Core.Discovery
                 {
                     var result = await m_socket.ReceiveFromAsync(buffer, SocketFlags.None, remoteEp);
                     if (result.ReceivedBytes <= 0) continue;
+                    if (result.RemoteEndPoint is not IPEndPoint remote) continue;
 
                     string xml = Encoding.UTF8.GetString(buffer, 0, result.ReceivedBytes);
-                    ProcessIncomingMessage(xml, result.RemoteEndPoint);
+                    ProcessIncomingMessage(xml, remote, ct);
                 }
                 catch (ObjectDisposedException) { break; }
+                catch (SocketException ex) when (ex.SocketErrorCode == SocketError.ConnectionReset || ex.SocketErrorCode == SocketError.MessageSize)
+                {
+                    // ICMP 端口不可达等瞬时错误，继续接收
+                }
                 catch (SocketException) { break; }
                 catch (Exception ex)
                 {
@@ -297,171 +418,101 @@ namespace UniShare.Core.Discovery
             }
         }
 
-        private void ProcessIncomingMessage(string xml, EndPoint remoteEndPoint)
+        private void ProcessIncomingMessage(string xml, IPEndPoint remote, CancellationToken ct)
         {
-            try
+            var request = ParseSoap(xml);
+            if (request?.BodyElement == null || string.IsNullOrEmpty(request.MessageId)) return;
+
+            var body = request.BodyElement;
+            string wsdNs = body.Name.NamespaceName;
+            if (wsdNs != NsWsd2005 && wsdNs != NsWsdOasis) return;
+            bool isOasis11 = wsdNs == NsWsdOasis;
+
+            if (body.Name.LocalName == "Probe")
             {
-                // 1. 处理 Probe 请求 (Windows 资源管理器搜索设备、摄像头扫描局域网共享)
-                if (xml.Contains("Probe", StringComparison.OrdinalIgnoreCase) &&
-                    !xml.Contains("ProbeMatches", StringComparison.OrdinalIgnoreCase))
-                {
-                    string messageId = ExtractMessageId(xml);
-                    if (string.IsNullOrEmpty(messageId)) return;
+                if (!ProbeMatchesDevice(body)) return;
 
-                    // 兼容各厂商摄像头及 Windows 资源管理器的探针格式（无 Types 通配探测、pub:Computer、Device、Storage 等）
-                    bool isTargetType = !xml.Contains("<wsd:Types>") && !xml.Contains("<d:Types>") && !xml.Contains("<Types>") && !xml.Contains(":Types>") ||
-                                        xml.Contains("Computer", StringComparison.OrdinalIgnoreCase) ||
-                                        xml.Contains("Device", StringComparison.OrdinalIgnoreCase) ||
-                                        xml.Contains("Storage", StringComparison.OrdinalIgnoreCase) ||
-                                        xml.Contains("NetworkVideoTransmitter", StringComparison.OrdinalIgnoreCase);
-
-                    bool isOasis11 = xml.Contains("http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01", StringComparison.OrdinalIgnoreCase);
-                    if (isTargetType)
-                    {
-                        SendProbeMatch(remoteEndPoint, messageId, isOasis11);
-                    }
-                }
-                // 2. 处理 Resolve 请求 (针对特定 UUID 或计算机名进行终结点解析)
-                else if (xml.Contains("Resolve", StringComparison.OrdinalIgnoreCase) &&
-                         !xml.Contains("ResolveMatches", StringComparison.OrdinalIgnoreCase))
+                // 多播探针需在 0~APP_MAX_DELAY 内随机延迟后回复，避免局域网响应风暴
+                _ = Task.Run(async () =>
                 {
-                    if (xml.Contains(m_deviceUuid, StringComparison.OrdinalIgnoreCase) ||
-                        xml.Contains(m_machineName, StringComparison.OrdinalIgnoreCase))
+                    try
                     {
-                        string messageId = ExtractMessageId(xml);
-                        if (!string.IsNullOrEmpty(messageId))
-                        {
-                            bool isOasis11 = xml.Contains("http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01", StringComparison.OrdinalIgnoreCase);
-                            SendResolveMatch(remoteEndPoint, messageId, isOasis11);
-                        }
+                        await Task.Delay(Random.Shared.Next(0, AppMaxDelayMs), ct);
+                        SendMatch(remote, request.MessageId, isOasis11, isResolve: false);
                     }
+                    catch { }
+                });
+            }
+            else if (body.Name.LocalName == "Resolve")
+            {
+                var address = body.Descendants().FirstOrDefault(e => e.Name.LocalName == "Address");
+                if (address != null && string.Equals(address.Value.Trim(), $"urn:uuid:{m_deviceUuid}", StringComparison.OrdinalIgnoreCase))
+                {
+                    SendMatch(remote, request.MessageId, isOasis11, isResolve: true);
                 }
             }
-            catch { }
         }
 
-        private static string ExtractMessageId(string xml)
-        {
-            var match = Regex.Match(xml, @"<(?:wsa:|a:)?MessageID[^>]*>([^<]+)</(?:wsa:|a:)?MessageID>", RegexOptions.IgnoreCase);
-            return match.Success ? match.Groups[1].Value.Trim() : string.Empty;
-        }
-
-        private void SendProbeMatch(EndPoint remoteEndPoint, string relatesToMessageId, bool isOasis11 = false)
+        private void SendMatch(IPEndPoint remote, string relatesToMessageId, bool isOasis11, bool isResolve)
         {
             if (m_socket == null) return;
 
-            string localIp = DiscoveryHelper.GetPrimaryIPv4Address().ToString();
+            string localIp = DiscoveryHelper.SelectLocalAddressFor(remote.Address).ToString();
             int msgNum = Interlocked.Increment(ref m_messageNumber);
             string msgId = Guid.NewGuid().ToString();
 
-            string wsdNs = isOasis11 ? "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01" : "http://schemas.xmlsoap.org/ws/2005/04/discovery";
-            string wsaNs = isOasis11 ? "http://www.w3.org/2005/08/addressing" : "http://schemas.xmlsoap.org/ws/2004/08/addressing";
-            string action = isOasis11 ? "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01/ProbeMatches" : "http://schemas.xmlsoap.org/ws/2005/04/discovery/ProbeMatches";
+            string wsdNs = isOasis11 ? NsWsdOasis : NsWsd2005;
+            string wsaNs = isOasis11 ? NsWsa2005 : NsWsa2004;
+            string kind = isResolve ? "ResolveMatches" : "ProbeMatches";
+            string item = isResolve ? "ResolveMatch" : "ProbeMatch";
+            string action = $"{wsdNs}/{kind}";
             string anonTo = isOasis11 ? "http://www.w3.org/2005/08/addressing/anonymous" : "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous";
 
             string responseXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://www.w3.org/2003/05/soap-envelope""
+<soap:Envelope xmlns:soap=""{NsSoap}""
                xmlns:wsa=""{wsaNs}""
                xmlns:wsd=""{wsdNs}""
-               xmlns:wsdp=""http://schemas.xmlsoap.org/ws/2006/02/devprof""
-               xmlns:pub=""http://schemas.microsoft.com/windows/pub/2005/07"">
+               xmlns:wsdp=""{NsDevProf}""
+               xmlns:pub=""{NsPub}"">
   <soap:Header>
     <wsa:To>{anonTo}</wsa:To>
     <wsa:Action>{action}</wsa:Action>
     <wsa:MessageID>urn:uuid:{msgId}</wsa:MessageID>
-    <wsa:RelatesTo>{relatesToMessageId}</wsa:RelatesTo>
+    <wsa:RelatesTo>{Escape(relatesToMessageId)}</wsa:RelatesTo>
     <wsd:AppSequence InstanceId=""{m_instanceId}"" MessageNumber=""{msgNum}""/>
   </soap:Header>
   <soap:Body>
-    <wsd:ProbeMatches>
-      <wsd:ProbeMatch>
+    <wsd:{kind}>
+      <wsd:{item}>
         <wsa:EndpointReference>
           <wsa:Address>urn:uuid:{m_deviceUuid}</wsa:Address>
         </wsa:EndpointReference>
         <wsd:Types>wsdp:Device pub:Computer</wsd:Types>
-        <wsd:Scopes>ldap: net.pipe:</wsd:Scopes>
         <wsd:XAddrs>http://{localIp}:{m_httpPort}/{m_deviceUuid}/</wsd:XAddrs>
         <wsd:MetadataVersion>1</wsd:MetadataVersion>
-      </wsd:ProbeMatch>
-    </wsd:ProbeMatches>
+      </wsd:{item}>
+    </wsd:{kind}>
   </soap:Body>
 </soap:Envelope>";
 
-            byte[] bytes = Encoding.UTF8.GetBytes(responseXml);
-            try
-            {
-                m_socket.SendTo(bytes, remoteEndPoint);
-            }
-            catch { }
-        }
-
-        private void SendResolveMatch(EndPoint remoteEndPoint, string relatesToMessageId, bool isOasis11 = false)
-        {
-            if (m_socket == null) return;
-
-            string localIp = DiscoveryHelper.GetPrimaryIPv4Address().ToString();
-            int msgNum = Interlocked.Increment(ref m_messageNumber);
-            string msgId = Guid.NewGuid().ToString();
-
-            string wsdNs = isOasis11 ? "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01" : "http://schemas.xmlsoap.org/ws/2005/04/discovery";
-            string wsaNs = isOasis11 ? "http://www.w3.org/2005/08/addressing" : "http://schemas.xmlsoap.org/ws/2004/08/addressing";
-            string action = isOasis11 ? "http://docs.oasis-open.org/ws-dd/ns/discovery/2009/01/ResolveMatches" : "http://schemas.xmlsoap.org/ws/2005/04/discovery/ResolveMatches";
-            string anonTo = isOasis11 ? "http://www.w3.org/2005/08/addressing/anonymous" : "http://schemas.xmlsoap.org/ws/2004/08/addressing/role/anonymous";
-
-            string responseXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://www.w3.org/2003/05/soap-envelope""
-               xmlns:wsa=""{wsaNs}""
-               xmlns:wsd=""{wsdNs}""
-               xmlns:wsdp=""http://schemas.xmlsoap.org/ws/2006/02/devprof""
-               xmlns:pub=""http://schemas.microsoft.com/windows/pub/2005/07"">
-  <soap:Header>
-    <wsa:To>{anonTo}</wsa:To>
-    <wsa:Action>{action}</wsa:Action>
-    <wsa:MessageID>urn:uuid:{msgId}</wsa:MessageID>
-    <wsa:RelatesTo>{relatesToMessageId}</wsa:RelatesTo>
-    <wsd:AppSequence InstanceId=""{m_instanceId}"" MessageNumber=""{msgNum}""/>
-  </soap:Header>
-  <soap:Body>
-    <wsd:ResolveMatches>
-      <wsd:ResolveMatch>
-        <wsa:EndpointReference>
-          <wsa:Address>urn:uuid:{m_deviceUuid}</wsa:Address>
-        </wsa:EndpointReference>
-        <wsd:Types>wsdp:Device pub:Computer</wsd:Types>
-        <wsd:Scopes>ldap: net.pipe:</wsd:Scopes>
-        <wsd:XAddrs>http://{localIp}:{m_httpPort}/{m_deviceUuid}/</wsd:XAddrs>
-        <wsd:MetadataVersion>1</wsd:MetadataVersion>
-      </wsd:ResolveMatch>
-    </wsd:ResolveMatches>
-  </soap:Body>
-</soap:Envelope>";
-
-            byte[] bytes = Encoding.UTF8.GetBytes(responseXml);
-            try
-            {
-                m_socket.SendTo(bytes, remoteEndPoint);
-            }
-            catch { }
+            SendTo(Encoding.UTF8.GetBytes(responseXml), remote, null);
         }
 
         private void SendHelloAnnouncement()
         {
-            if (m_socket == null) return;
-
-            string localIp = DiscoveryHelper.GetPrimaryIPv4Address().ToString();
-            int msgNum = Interlocked.Increment(ref m_messageNumber);
-            string msgId = Guid.NewGuid().ToString();
-
-            string helloXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://www.w3.org/2003/05/soap-envelope""
-               xmlns:wsa=""http://schemas.xmlsoap.org/ws/2004/08/addressing""
-               xmlns:wsd=""http://schemas.xmlsoap.org/ws/2005/04/discovery""
-               xmlns:wsdp=""http://schemas.xmlsoap.org/ws/2006/02/devprof""
-               xmlns:pub=""http://schemas.microsoft.com/windows/pub/2005/07"">
+            foreach (var local in DiscoveryHelper.GetLocalInterfaceAddresses())
+            {
+                int msgNum = Interlocked.Increment(ref m_messageNumber);
+                string helloXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:soap=""{NsSoap}""
+               xmlns:wsa=""{NsWsa2004}""
+               xmlns:wsd=""{NsWsd2005}""
+               xmlns:wsdp=""{NsDevProf}""
+               xmlns:pub=""{NsPub}"">
   <soap:Header>
     <wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To>
-    <wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Hello</wsa:Action>
-    <wsa:MessageID>urn:uuid:{msgId}</wsa:MessageID>
+    <wsa:Action>{NsWsd2005}/Hello</wsa:Action>
+    <wsa:MessageID>urn:uuid:{Guid.NewGuid()}</wsa:MessageID>
     <wsd:AppSequence InstanceId=""{m_instanceId}"" MessageNumber=""{msgNum}""/>
   </soap:Header>
   <soap:Body>
@@ -470,37 +521,29 @@ namespace UniShare.Core.Discovery
         <wsa:Address>urn:uuid:{m_deviceUuid}</wsa:Address>
       </wsa:EndpointReference>
       <wsd:Types>wsdp:Device pub:Computer</wsd:Types>
-      <wsd:Scopes>ldap: net.pipe:</wsd:Scopes>
-      <wsd:XAddrs>http://{localIp}:{m_httpPort}/{m_deviceUuid}/</wsd:XAddrs>
+      <wsd:XAddrs>http://{local.Address}:{m_httpPort}/{m_deviceUuid}/</wsd:XAddrs>
       <wsd:MetadataVersion>1</wsd:MetadataVersion>
     </wsd:Hello>
   </soap:Body>
 </soap:Envelope>";
 
-            byte[] bytes = Encoding.UTF8.GetBytes(helloXml);
-            IPEndPoint dest = new IPEndPoint(IPAddress.Parse(MulticastIPv4), WsdUdpPort);
-            try
-            {
-                m_socket.SendTo(bytes, dest);
+                SendTo(Encoding.UTF8.GetBytes(helloXml), new IPEndPoint(IPAddress.Parse(MulticastIPv4), WsdUdpPort), local.Address);
             }
-            catch { }
         }
 
         private void SendByeAnnouncement()
         {
-            if (m_socket == null) return;
-
-            int msgNum = Interlocked.Increment(ref m_messageNumber);
-            string msgId = Guid.NewGuid().ToString();
-
-            string byeXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
-<soap:Envelope xmlns:soap=""http://www.w3.org/2003/05/soap-envelope""
-               xmlns:wsa=""http://schemas.xmlsoap.org/ws/2004/08/addressing""
-               xmlns:wsd=""http://schemas.xmlsoap.org/ws/2005/04/discovery"">
+            foreach (var local in DiscoveryHelper.GetLocalInterfaceAddresses())
+            {
+                int msgNum = Interlocked.Increment(ref m_messageNumber);
+                string byeXml = $@"<?xml version=""1.0"" encoding=""utf-8""?>
+<soap:Envelope xmlns:soap=""{NsSoap}""
+               xmlns:wsa=""{NsWsa2004}""
+               xmlns:wsd=""{NsWsd2005}"">
   <soap:Header>
     <wsa:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</wsa:To>
-    <wsa:Action>http://schemas.xmlsoap.org/ws/2005/04/discovery/Bye</wsa:Action>
-    <wsa:MessageID>urn:uuid:{msgId}</wsa:MessageID>
+    <wsa:Action>{NsWsd2005}/Bye</wsa:Action>
+    <wsa:MessageID>urn:uuid:{Guid.NewGuid()}</wsa:MessageID>
     <wsd:AppSequence InstanceId=""{m_instanceId}"" MessageNumber=""{msgNum}""/>
   </soap:Header>
   <soap:Body>
@@ -512,11 +555,25 @@ namespace UniShare.Core.Discovery
   </soap:Body>
 </soap:Envelope>";
 
-            byte[] bytes = Encoding.UTF8.GetBytes(byeXml);
-            IPEndPoint dest = new IPEndPoint(IPAddress.Parse(MulticastIPv4), WsdUdpPort);
+                SendTo(Encoding.UTF8.GetBytes(byeXml), new IPEndPoint(IPAddress.Parse(MulticastIPv4), WsdUdpPort), local.Address);
+            }
+        }
+
+        private void SendTo(byte[] bytes, IPEndPoint destination, IPAddress? multicastInterface)
+        {
+            var socket = m_socket;
+            if (socket == null) return;
+
             try
             {
-                m_socket.SendTo(bytes, dest);
+                lock (m_sendLock)
+                {
+                    if (multicastInterface != null)
+                    {
+                        socket.SetSocketOption(SocketOptionLevel.IP, SocketOptionName.MulticastInterface, multicastInterface.GetAddressBytes());
+                    }
+                    socket.SendTo(bytes, destination);
+                }
             }
             catch { }
         }

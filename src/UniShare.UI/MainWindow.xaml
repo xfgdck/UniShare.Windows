@@ -244,7 +244,7 @@
                     </Border>
 
                     <!-- 设置卡片 2: 局域网设备自发现 -->
-                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
+                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,0,14">
                         <StackPanel>
                             <TextBlock Text="局域网设备自发现" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
 
@@ -261,6 +261,17 @@
                                                Margin="26,0,0,0"/>
                                 </StackPanel>
                             </Border>
+                        </StackPanel>
+                    </Border>
+
+                    <!-- 设置卡片 3: 关于 -->
+                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
+                        <StackPanel>
+                            <TextBlock Text="关于" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                            <TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12">
+                                <Run Text="版本："/>
+                                <Run Text="{Binding AppVersion, Mode=OneWay}"/>
+                            </TextBlock>
                         </StackPanel>
                     </Border>
                 </StackPanel>

@@ -1,0 +1,14 @@
+<Project>
+
+  <!--
+    版本号统一使用编译日期 (yyyy.M.d，例如 2026.10.26)。
+    打包脚本 Build-Installer.ps1 会显式传入 -p:Version=<同一日期>，安装包则从发布后的 UniShare.exe 读取版本，
+    保证程序文件版本、界面显示版本与安装包名称 / 安装版本完全一致。
+  -->
+  <PropertyGroup>
+    <Version Condition="'$(Version)' == ''">$([System.DateTime]::Now.ToString('yyyy.M.d'))</Version>
+    <!-- 不在产品版本后附加 +<git 提交哈希>，保持版本字符串为纯日期 -->
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+</Project>

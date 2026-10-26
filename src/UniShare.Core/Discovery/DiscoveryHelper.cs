@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
@@ -84,11 +85,48 @@ namespace UniShare.Core.Discovery
         }
 
         /// <summary>
-        /// 获取本机所有活动的局域网物理网卡 IPv4 地址（排除本地回环 127.0.0.1 及链路本地 169.254.x.x 地址）
+        /// 获取本机所有活动的局域网物理网卡 IPv4 地址信息（含子网掩码、网卡索引、广播地址与 MAC），
+        /// 排除本地回环与链路本地 169.254.x.x 地址；无物理网卡时回退到其他活动网卡
         /// </summary>
-        public static List<IPAddress> GetLocalIPv4Addresses()
+        public static List<LocalInterfaceAddress> GetLocalInterfaceAddresses()
         {
-            var results = new List<IPAddress>();
+            // 自发现服务在每个收到的数据包上都会查询网卡（含注册表读取），短时缓存以降低繁忙局域网下的开销
+            lock (s_interfaceCacheLock)
+            {
+                if (s_interfaceCache != null && DateTime.UtcNow - s_interfaceCacheTime < InterfaceCacheDuration)
+                {
+                    return new List<LocalInterfaceAddress>(s_interfaceCache);
+                }
+            }
+
+            var results = QueryLocalInterfaceAddresses();
+            lock (s_interfaceCacheLock)
+            {
+                s_interfaceCache = results;
+                s_interfaceCacheTime = DateTime.UtcNow;
+            }
+            return new List<LocalInterfaceAddress>(results);
+        }
+
+        /// <summary>
+        /// 清除网卡地址缓存（网络环境变化时调用）
+        /// </summary>
+        public static void InvalidateInterfaceCache()
+        {
+            lock (s_interfaceCacheLock)
+            {
+                s_interfaceCache = null;
+            }
+        }
+
+        private static readonly object s_interfaceCacheLock = new object();
+        private static readonly TimeSpan InterfaceCacheDuration = TimeSpan.FromSeconds(5);
+        private static List<LocalInterfaceAddress>? s_interfaceCache;
+        private static DateTime s_interfaceCacheTime;
+
+        private static List<LocalInterfaceAddress> QueryLocalInterfaceAddresses()
+        {
+            var results = new List<LocalInterfaceAddress>();
 
             try
             {
@@ -116,27 +154,48 @@ namespace UniShare.Core.Discovery
                 foreach (var ni in targetInterfaces)
                 {
                     var ipProps = ni.GetIPProperties();
+                    int index = -1;
+                    try { index = ipProps.GetIPv4Properties()?.Index ?? -1; } catch { }
+                    byte[] mac = ni.GetPhysicalAddress().GetAddressBytes();
+
                     foreach (var addr in ipProps.UnicastAddresses)
                     {
-                        if (addr.Address.AddressFamily == AddressFamily.InterNetwork)
-                        {
-                            byte[] bytes = addr.Address.GetAddressBytes();
-                            // 排除 127.x.x.x 与 169.254.x.x
-                            if (bytes[0] == 127 || (bytes[0] == 169 && bytes[1] == 254))
-                                continue;
+                        if (addr.Address.AddressFamily != AddressFamily.InterNetwork)
+                            continue;
 
-                            results.Add(addr.Address);
+                        byte[] bytes = addr.Address.GetAddressBytes();
+                        // 排除 127.x.x.x 与 169.254.x.x
+                        if (bytes[0] == 127 || (bytes[0] == 169 && bytes[1] == 254))
+                            continue;
+
+                        IPAddress mask = addr.IPv4Mask ?? IPAddress.Parse("255.255.255.0");
+                        byte[] maskBytes = mask.GetAddressBytes();
+                        byte[] broadcastBytes = new byte[4];
+                        for (int i = 0; i < 4; i++)
+                        {
+                            broadcastBytes[i] = (byte)(bytes[i] | ~maskBytes[i]);
                         }
+
+                        results.Add(new LocalInterfaceAddress(addr.Address, mask, new IPAddress(broadcastBytes), index,
+                            mac.Length == 6 ? mac : new byte[6]));
                     }
                 }
             }
             catch { }
 
+            return results;
+        }
+
+        /// <summary>
+        /// 获取本机所有活动的局域网物理网卡 IPv4 地址（排除本地回环 127.0.0.1 及链路本地 169.254.x.x 地址）
+        /// </summary>
+        public static List<IPAddress> GetLocalIPv4Addresses()
+        {
+            var results = GetLocalInterfaceAddresses().Select(a => a.Address).ToList();
             if (results.Count == 0)
             {
                 results.Add(IPAddress.Loopback);
             }
-
             return results;
         }
 
@@ -150,63 +209,40 @@ namespace UniShare.Core.Discovery
         }
 
         /// <summary>
-        /// 获取局域网各有效物理网卡的子网定向广播地址及通用广播地址 (255.255.255.255)
+        /// 为指定的远端地址选择同一子网的本机网卡地址（多网卡时保证返回对方可达的 IP），找不到时返回首选地址
         /// </summary>
-        public static List<IPAddress> GetBroadcastAddresses()
+        public static LocalInterfaceAddress? SelectInterfaceFor(IPAddress? remote, List<LocalInterfaceAddress>? candidates = null)
         {
-            var results = new HashSet<IPAddress>
+            var list = candidates ?? GetLocalInterfaceAddresses();
+            if (list.Count == 0) return null;
+
+            if (remote != null && remote.AddressFamily == AddressFamily.InterNetwork)
             {
-                IPAddress.Broadcast // 255.255.255.255
-            };
-
-            try
-            {
-                var interfaces = NetworkInterface.GetAllNetworkInterfaces();
-                var physicalInterfaces = new List<NetworkInterface>();
-                var fallbackInterfaces = new List<NetworkInterface>();
-
-                foreach (var ni in interfaces)
+                foreach (var local in list)
                 {
-                    if (ni.OperationalStatus != OperationalStatus.Up || ni.NetworkInterfaceType == NetworkInterfaceType.Loopback)
-                        continue;
-
-                    if (IsPhysicalInterface(ni))
+                    if (local.IsSameSubnet(remote))
                     {
-                        physicalInterfaces.Add(ni);
-                    }
-                    else
-                    {
-                        fallbackInterfaces.Add(ni);
-                    }
-                }
-
-                var targetInterfaces = physicalInterfaces.Count > 0 ? physicalInterfaces : fallbackInterfaces;
-
-                foreach (var ni in targetInterfaces)
-                {
-                    var ipProps = ni.GetIPProperties();
-                    foreach (var addr in ipProps.UnicastAddresses)
-                    {
-                        if (addr.Address.AddressFamily == AddressFamily.InterNetwork && addr.IPv4Mask != null)
-                        {
-                            byte[] ipBytes = addr.Address.GetAddressBytes();
-                            byte[] maskBytes = addr.IPv4Mask.GetAddressBytes();
-                            if (ipBytes[0] == 127 || (ipBytes[0] == 169 && ipBytes[1] == 254))
-                                continue;
-
-                            byte[] broadcastBytes = new byte[4];
-                            for (int i = 0; i < 4; i++)
-                            {
-                                broadcastBytes[i] = (byte)(ipBytes[i] | ~maskBytes[i]);
-                            }
-                            results.Add(new IPAddress(broadcastBytes));
-                        }
+                        return local;
                     }
                 }
             }
-            catch { }
+            return list[0];
+        }
 
-            return new List<IPAddress>(results);
+        /// <summary>
+        /// 为指定的远端地址选择同一子网的本机 IPv4 地址
+        /// </summary>
+        public static IPAddress SelectLocalAddressFor(IPAddress? remote)
+        {
+            return SelectInterfaceFor(remote)?.Address ?? IPAddress.Loopback;
+        }
+
+        /// <summary>
+        /// 获取局域网各有效物理网卡的子网定向广播地址
+        /// </summary>
+        public static List<IPAddress> GetBroadcastAddresses()
+        {
+            return GetLocalInterfaceAddresses().Select(a => a.Broadcast).Distinct().ToList();
         }
 
         /// <summary>
@@ -268,6 +304,40 @@ namespace UniShare.Core.Discovery
             Array.Copy(raw, buffer, copyLen);
             buffer[15] = suffix;
             return buffer;
+        }
+    }
+
+    /// <summary>
+    /// 本机单个网卡 IPv4 地址信息
+    /// </summary>
+    public sealed class LocalInterfaceAddress
+    {
+        public LocalInterfaceAddress(IPAddress address, IPAddress mask, IPAddress broadcast, int interfaceIndex, byte[] mac)
+        {
+            Address = address;
+            Mask = mask;
+            Broadcast = broadcast;
+            InterfaceIndex = interfaceIndex;
+            Mac = mac;
+        }
+
+        public IPAddress Address { get; }
+        public IPAddress Mask { get; }
+        public IPAddress Broadcast { get; }
+        public int InterfaceIndex { get; }
+        public byte[] Mac { get; }
+
+        public bool IsSameSubnet(IPAddress other)
+        {
+            byte[] a = Address.GetAddressBytes();
+            byte[] b = other.GetAddressBytes();
+            byte[] m = Mask.GetAddressBytes();
+            if (b.Length != 4) return false;
+            for (int i = 0; i < 4; i++)
+            {
+                if ((a[i] & m[i]) != (b[i] & m[i])) return false;
+            }
+            return true;
         }
     }
 }

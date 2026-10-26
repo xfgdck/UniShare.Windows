@@ -12,6 +12,7 @@ namespace UniShare.Server
     {
         private static SmbServerEngine? s_engine;
         private static bool s_stoppedLanmanServer = false;
+        private static UniShare.Core.Models.SystemSmbState? s_systemSmbBackup;
 
         static void Main(string[] args)
         {
@@ -72,6 +73,8 @@ namespace UniShare.Server
                     else
                     {
                         Console.WriteLine("正在尝试停止 Windows SMB 协议栈以独占释放 445 端口...");
+                        // 停用前记录系统共享服务原始状态，退出时按原样还原
+                        s_systemSmbBackup = PortHelper.CaptureSystemSmbState();
                         var (success, msg) = PortHelper.TryStopLanmanServer(s => Console.WriteLine($"  {s}"));
                         if (success)
                         {
@@ -245,7 +248,7 @@ namespace UniShare.Server
                 if (string.IsNullOrEmpty(input) || input.Equals("y", StringComparison.OrdinalIgnoreCase))
                 {
                     Console.WriteLine("\n正在恢复 Windows 自带 SMB 服务与底层驱动...");
-                    var (success, msg) = PortHelper.TryStartLanmanServer(s => Console.WriteLine($"  {s}"));
+                    var (success, msg) = PortHelper.RestoreSystemSmb(s_systemSmbBackup, s => Console.WriteLine($"  {s}"));
                     if (success)
                     {
                         Console.ForegroundColor = ConsoleColor.Green;

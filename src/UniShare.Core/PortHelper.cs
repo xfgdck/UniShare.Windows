@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.Threading;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
+using UniShare.Core.Models;
 
 namespace UniShare.Core
 {
@@ -255,6 +256,72 @@ namespace UniShare.Core
             }
         }
 
+        private const string LanmanServerRegistryKey = @"SYSTEM\CurrentControlSet\Services\LanmanServer";
+
+        /// <summary>
+        /// 在首次停用系统 SMB 前记录 LanmanServer 的原始启动类型与运行状态，用于退出 / 卸载时按原样还原
+        /// </summary>
+        public static SystemSmbState CaptureSystemSmbState()
+        {
+            var state = new SystemSmbState();
+            try
+            {
+                using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(LanmanServerRegistryKey);
+                if (key != null)
+                {
+                    if (key.GetValue("Start") is int start)
+                    {
+                        state.LanmanStartType = start;
+                    }
+                    state.LanmanDelayedAutoStart = key.GetValue("DelayedAutostart") is int delayed && delayed != 0;
+                }
+            }
+            catch { }
+
+            int status = GetServiceStatusCode("LanmanServer");
+            state.WasRunning = status == 2 || status == 4; // START_PENDING / RUNNING
+            return state;
+        }
+
+        /// <summary>
+        /// 按记录的原始状态还原 Windows 系统 SMB 服务（无记录时回退为“自动启动并运行”的系统默认状态）
+        /// </summary>
+        public static (bool Success, string Message) RestoreSystemSmb(SystemSmbState? state, Action<string>? statusCallback = null)
+        {
+            if (state == null)
+            {
+                return TryStartLanmanServer(statusCallback);
+            }
+
+            try
+            {
+                string startType = state.LanmanStartType switch
+                {
+                    2 => state.LanmanDelayedAutoStart ? "delayed-auto" : "auto",
+                    3 => "demand",
+                    4 => "disabled",
+                    _ => "auto"
+                };
+
+                statusCallback?.Invoke($"正在按原始状态还原 Windows 系统共享服务 (启动类型: {startType}, 原运行状态: {(state.WasRunning ? "运行" : "停止")})...");
+                RunScCommand($"config LanmanServer start= {startType}");
+
+                if (state.WasRunning)
+                {
+                    RunScCommand("start srvnet");
+                    RunScCommand("start srv2");
+                    RunScCommand("start LanmanServer");
+                    return (true, "已按原始状态还原 Windows 系统共享服务，系统驱动将在后台恢复运行。");
+                }
+
+                return (true, "已还原 Windows 系统共享服务的原始启动类型（原本处于停止状态，未启动服务）。");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"还原 Windows 系统共享服务失败: {ex.Message}");
+            }
+        }
+
         private static (int ExitCode, string Output) RunScCommand(string arguments)
         {
             try
@@ -267,8 +334,15 @@ namespace UniShare.Core
                 p.StartInfo.RedirectStandardError = true;
                 p.StartInfo.CreateNoWindow = true;
                 p.Start();
+                // 同时异步读取 stderr，避免任一管道缓冲区写满导致子进程阻塞
+                var stderrTask = p.StandardError.ReadToEndAsync();
                 string output = p.StandardOutput.ReadToEnd();
-                p.WaitForExit(3000);
+                if (!p.WaitForExit(5000))
+                {
+                    try { p.Kill(); } catch { }
+                    return (-1, output);
+                }
+                stderrTask.Wait(1000);
                 return (p.ExitCode, output);
             }
             catch (Exception ex)

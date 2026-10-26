@@ -7,6 +7,7 @@ using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
 using Microsoft.Win32;
+using UniShare.Core;
 using UniShare.Core.Models;
 using Wpf.Ui.Controls;
 
@@ -41,6 +42,9 @@ namespace UniShare.UI.Views
 
     public partial class AddShareDialog : FluentWindow
     {
+        // Windows 共享名禁用字符（参照 LanmanServer NetShareAdd 的命名限制）
+        private static readonly char[] s_invalidShareNameChars = "\"/\\[]:|<>+=;,*?".ToCharArray();
+        private static readonly string[] s_reservedShareNames = { "IPC$", "ADMIN$", "PRINT$" };
         private readonly ShareConfig? m_editingShare;
         private readonly List<ShareConfig> m_existingShares;
         public ObservableCollection<ShareUserItem> UserItems { get; } = new ObservableCollection<ShareUserItem>();
@@ -206,6 +210,11 @@ namespace UniShare.UI.Views
                 return;
             }
 
+            if (!ConfirmUserPassword(username, password))
+            {
+                return;
+            }
+
             int levelIndex = CmbNewUserPermission.SelectedIndex;
 
             UserItems.Add(new ShareUserItem
@@ -218,6 +227,41 @@ namespace UniShare.UI.Views
             TxtNewUser.Text = string.Empty;
             TxtNewPassword.Password = string.Empty;
             UpdateUserItemsVisibility();
+        }
+
+        /// <summary>
+        /// 校验同名用户跨共享密码一致性及空密码风险提示，返回 false 表示不应添加
+        /// </summary>
+        private bool ConfirmUserPassword(string username, string password)
+        {
+            var conflict = ShareAccessEvaluator.FindPasswordConflict(m_existingShares, m_editingShare, username, password);
+            if (conflict != null)
+            {
+                MessageDialog.ShowWarning(
+                    $"用户名 [{username}] 已在共享 [{conflict.ShareName}] 中使用，但密码与此处输入的不同。\n\n设备登录发生在选择共享目录之前，同一个用户名在所有共享中只能使用同一个密码。请输入与该共享相同的密码，或改用其他用户名。",
+                    "用户密码冲突",
+                    owner: this);
+                return false;
+            }
+
+            if (string.IsNullOrEmpty(password))
+            {
+                return MessageDialog.ShowConfirm(
+                    $"用户 [{username}] 未设置密码。\n\nWindows 电脑默认禁止使用空密码账户进行网络登录，可能无法连接；手机、电视等设备一般不受影响。\n\n确定要添加空密码用户吗？",
+                    "空密码提示",
+                    confirmText: "仍然添加",
+                    cancelText: "返回修改",
+                    owner: this);
+            }
+
+            return true;
+        }
+
+        private static bool IsDriveRoot(string fullPath)
+        {
+            string? root = Path.GetPathRoot(fullPath);
+            return !string.IsNullOrEmpty(root) &&
+                   string.Equals(root.TrimEnd('\\', '/'), fullPath.TrimEnd('\\', '/'), StringComparison.OrdinalIgnoreCase);
         }
 
         private void BtnOk_Click(object sender, RoutedEventArgs e)
@@ -252,9 +296,16 @@ namespace UniShare.UI.Views
                 return;
             }
 
-            if (name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.Contains('/') || name.Contains('\\'))
+            if (name.Length > 80 || name.IndexOfAny(s_invalidShareNameChars) >= 0 || name.Any(char.IsControl))
             {
-                MessageDialog.ShowWarning("共享名称不能包含斜杠或非法文件名字符。", "共享名称无效", owner: this);
+                MessageDialog.ShowWarning("共享名称不能超过 80 个字符，且不能包含以下字符：\" / \\ [ ] : | < > + = ; , * ?", "共享名称无效", owner: this);
+                return;
+            }
+
+            if (s_reservedShareNames.Contains(name, StringComparer.OrdinalIgnoreCase) ||
+                (name.Length == 2 && char.IsLetter(name[0]) && name[1] == '$'))
+            {
+                MessageDialog.ShowWarning($"[{name}] 是 Windows 系统保留的共享名称，请更换其他名称。", "共享名称无效", owner: this);
                 return;
             }
 
@@ -297,6 +348,53 @@ namespace UniShare.UI.Views
             }
 
             bool allowGuest = ChkAllowGuest.IsChecked == true;
+
+            // 同名用户跨共享密码一致性校验（兼容旧版配置中遗留的冲突数据）
+            foreach (var item in UserItems)
+            {
+                var conflict = ShareAccessEvaluator.FindPasswordConflict(m_existingShares, m_editingShare, item.Username, item.Password);
+                if (conflict != null)
+                {
+                    MessageDialog.ShowWarning(
+                        $"用户 [{item.Username}] 在共享 [{conflict.ShareName}] 中的密码与此处不同。\n\n同一个用户名在所有共享中只能使用同一个密码，请删除该用户后用相同密码重新添加，或改用其他用户名。",
+                        "用户密码冲突",
+                        owner: this);
+                    return;
+                }
+            }
+
+            if (IsDriveRoot(path))
+            {
+                bool confirmedRoot = MessageDialog.ShowConfirm(
+                    $"您选择的是整个磁盘分区 [{path}]。\n\n共享整个分区会让访问者看到该盘上的全部文件，建议只共享具体的文件夹。确定要继续吗？",
+                    "共享整个磁盘",
+                    confirmText: "继续共享",
+                    cancelText: "返回修改",
+                    isDanger: true,
+                    owner: this);
+                if (!confirmedRoot) return;
+            }
+
+            if (!Directory.Exists(path))
+            {
+                bool create = MessageDialog.ShowConfirm(
+                    $"本地文件夹不存在：\n{path}\n\n是否立即创建该文件夹？",
+                    "文件夹不存在",
+                    confirmText: "创建文件夹",
+                    cancelText: "返回修改",
+                    owner: this);
+                if (!create) return;
+
+                try
+                {
+                    Directory.CreateDirectory(path);
+                }
+                catch (Exception ex)
+                {
+                    MessageDialog.ShowWarning($"创建文件夹失败：\n{ex.Message}", "无法创建文件夹", owner: this);
+                    return;
+                }
+            }
 
             // 核心校验：既未添加任何用户，也未开启匿名访问时，禁止创建/保存无意义的共享
             if (UserItems.Count == 0 && !allowGuest)

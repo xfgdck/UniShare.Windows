@@ -88,7 +88,9 @@ namespace UniShare.UI.Helpers
                     ? $"\\\"{exePath}\\\""
                     : $"\\\"{exePath}\\\" {arguments}";
 
-                var (fallbackOk, fallbackOut) = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"{trValue}\" /SC ONLOGON /RL HIGHEST /F");
+                // /RU + /IT：限定为当前用户登录时以交互令牌运行（无需保存密码），避免任意用户登录都触发
+                string currentUser = System.Security.Principal.WindowsIdentity.GetCurrent().Name;
+                var (fallbackOk, fallbackOut) = RunSchtasks($"/Create /TN \"{TaskName}\" /TR \"{trValue}\" /SC ONLOGON /RU \"{currentUser}\" /IT /RL HIGHEST /F");
                 if (fallbackOk)
                 {
                     return (true, "已成功开启开机自启动。");
@@ -167,6 +169,8 @@ namespace UniShare.UI.Helpers
             string escapedExe = SecurityElement.Escape(exePath) ?? exePath;
             string escapedArgs = SecurityElement.Escape(arguments) ?? string.Empty;
             string escapedWorkDir = SecurityElement.Escape(workingDirectory) ?? workingDirectory;
+            // 限定为当前用户：未指定 UserId 的登录触发器会在任意用户登录时触发
+            string userId = SecurityElement.Escape(System.Security.Principal.WindowsIdentity.GetCurrent().Name) ?? string.Empty;
 
             string argsNode = string.IsNullOrWhiteSpace(escapedArgs)
                 ? string.Empty
@@ -180,10 +184,12 @@ namespace UniShare.UI.Helpers
   <Triggers>
     <LogonTrigger>
       <Enabled>true</Enabled>
+      <UserId>{userId}</UserId>
     </LogonTrigger>
   </Triggers>
   <Principals>
     <Principal id=""Author"">
+      <UserId>{userId}</UserId>
       <LogonType>InteractiveToken</LogonType>
       <RunLevel>HighestAvailable</RunLevel>
     </Principal>
