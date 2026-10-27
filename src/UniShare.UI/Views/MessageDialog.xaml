@@ -45,14 +45,14 @@
                     Width="42"
                     Height="42"
                     CornerRadius="12"
-                    Background="#1A3B82F6"
+                    Background="#1E005FB8"
                     VerticalAlignment="Top"
                     Margin="0,2,16,0">
                 <TextBlock x:Name="TxtIconSymbol"
                            Text="i"
                            FontSize="20"
                            FontWeight="Bold"
-                           Foreground="#3B82F6"
+                           Foreground="#005FB8"
                            HorizontalAlignment="Center"
                            VerticalAlignment="Center"/>
             </Border>

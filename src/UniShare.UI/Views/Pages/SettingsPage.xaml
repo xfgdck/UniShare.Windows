@@ -1,0 +1,52 @@
+<UserControl x:Class="UniShare.UI.Views.Pages.SettingsPage"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml">
+
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Focusable="False">
+        <StackPanel Margin="24,20,24,24" MaxWidth="960">
+            <TextBlock Text="设置" Style="{StaticResource PageTitleText}"/>
+
+            <!-- 开机自动启动 -->
+            <Border Style="{StaticResource SettingRow}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource IconTile}" Margin="0,0,14,0">
+                        <ui:SymbolIcon Symbol="Power24" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="开机自动启动" FontSize="14"/>
+                        <TextBlock Text="启动时以后台模式运行，不显示程序面板，点击桌面图标可调出主界面。"
+                                   Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding IsAutoStart, Mode=TwoWay}" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+
+            <!-- 局域网自动发现 -->
+            <Border Style="{StaticResource SettingRow}">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Border Style="{StaticResource IconTile}" Background="{StaticResource TileTealBg}"
+                            TextElement.Foreground="{StaticResource TileTealFg}" Margin="0,0,14,0">
+                        <ui:SymbolIcon Symbol="Globe24" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="局域网设备自发现" FontSize="14"/>
+                        <TextBlock Text="允许局域网内的手机、电脑等设备自动发现本机，无需手动输入 IP。"
+                                   Style="{StaticResource CaptionText}" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <ui:ToggleSwitch Grid.Column="2" IsChecked="{Binding IsNetworkDiscoveryEnabled, Mode=TwoWay}" VerticalAlignment="Center"/>
+                </Grid>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>

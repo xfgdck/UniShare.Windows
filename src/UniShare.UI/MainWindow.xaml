@@ -3,26 +3,37 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:ui="http://schemas.lepo.co/wpfui/2022/xaml"
         xmlns:tray="clr-namespace:Wpf.Ui.Tray.Controls;assembly=Wpf.Ui.Tray"
-        xmlns:local="clr-namespace:UniShare.UI"
         xmlns:vm="clr-namespace:UniShare.UI.ViewModels"
+        xmlns:pages="clr-namespace:UniShare.UI.Views.Pages"
         Title="UniShare - 便携式文件共享服务"
-        Height="640" Width="680"
-        MinHeight="540" MinWidth="580"
+        Height="640" Width="820"
+        MinHeight="520" MinWidth="680"
         WindowStartupLocation="CenterScreen"
         ExtendsContentIntoTitleBar="True"
         WindowBackdropType="Mica"
         Icon="pack://application:,,,/Assets/icon.ico"
         Closing="MainWindow_Closing">
 
+    <ui:FluentWindow.Resources>
+        <!-- 页面视图模型 → 页面视图 -->
+        <DataTemplate DataType="{x:Type vm:SharesViewModel}">
+            <pages:SharesPage/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:SettingsViewModel}">
+            <pages:SettingsPage/>
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type vm:AboutViewModel}">
+            <pages:AboutPage/>
+        </DataTemplate>
+    </ui:FluentWindow.Resources>
+
     <Grid>
         <Grid.RowDefinitions>
-            <!-- 标题栏 -->
             <RowDefinition Height="Auto"/>
-            <!-- 主内容 -->
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
-        <!-- 系统托盘控件 -->
+        <!-- 系统托盘 -->
         <tray:NotifyIcon x:Name="MyNotifyIcon"
                          Icon="pack://application:,,,/Assets/icon.ico"
                          FocusOnLeftClick="True"
@@ -37,245 +48,81 @@
             </tray:NotifyIcon.Menu>
         </tray:NotifyIcon>
 
-        <!-- 现代标题栏：左上角显示软件图标与名称，紧贴最左侧 -->
-        <Grid Grid.Row="0" Margin="0,0,0,2">
+        <!-- 标题栏 -->
+        <Grid Grid.Row="0">
             <ui:TitleBar/>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="14,0,0,0" IsHitTestVisible="False">
-                <Image Source="pack://application:,,,/Assets/icon.ico" Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                <TextBlock Text="UniShare" FontWeight="Bold" FontSize="13" VerticalAlignment="Center"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Left" VerticalAlignment="Center" Margin="16,0,0,0" IsHitTestVisible="False">
+                <Image Source="pack://application:,,,/Assets/icon.ico" Width="16" Height="16" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                <TextBlock Text="UniShare" FontWeight="SemiBold" FontSize="13" VerticalAlignment="Center"/>
             </StackPanel>
         </Grid>
 
-        <!-- 主页面内容区 -->
-        <ScrollViewer Grid.Row="1"
-                      VerticalScrollBarVisibility="Auto"
-                      Margin="18,4,4,18"
-                      Visibility="{Binding IsSettingsPageOpen, Converter={x:Static local:Converters.InverseBoolToVisible}}">
-            <StackPanel Margin="0,0,14,0">
-                <!-- 卡片 1: 启停服务 Hero Card -->
-                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,0,14">
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="132"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
 
-                        <StackPanel Grid.Column="0" VerticalAlignment="Center">
-                            <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                <Border Background="{Binding StatusColor}" Width="12" Height="12" CornerRadius="6" VerticalAlignment="Center" Margin="0,0,8,0"/>
-                                <TextBlock Text="{Binding StatusText}" FontSize="18" FontWeight="Bold" Foreground="{Binding StatusColor}" VerticalAlignment="Center"/>
+            <!-- 左侧导航 -->
+            <Grid Grid.Column="0" Margin="6,8,6,12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <ListBox Grid.Row="0"
+                         ItemsSource="{Binding NavigationItems}"
+                         SelectedItem="{Binding SelectedItem, Mode=TwoWay}"
+                         ItemContainerStyle="{StaticResource NavListItem}"
+                         FocusVisualStyle="{x:Null}"
+                         Background="Transparent"
+                         BorderThickness="0"
+                         Padding="0"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                    <ListBox.Template>
+                        <ControlTemplate TargetType="ListBox">
+                            <ItemsPresenter/>
+                        </ControlTemplate>
+                    </ListBox.Template>
+                    <ListBox.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:NavigationItem}">
+                            <StackPanel Orientation="Horizontal">
+                                <ui:SymbolIcon Symbol="{Binding Icon}" FontSize="18" Margin="0,0,12,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="{Binding Title}" FontSize="14" VerticalAlignment="Center"/>
                             </StackPanel>
-                            <TextBlock Text="{Binding StatusSubtitle}" Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12" TextWrapping="Wrap"/>
-                        </StackPanel>
+                        </DataTemplate>
+                    </ListBox.ItemTemplate>
+                </ListBox>
 
-                        <!-- 设置按钮与大启停开关 -->
-                        <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                            <ui:Button Content="设置"
-                                       Appearance="Secondary"
-                                       Height="42" Padding="18,0" Margin="0,0,10,0"
-                                       VerticalAlignment="Center"
-                                       FontWeight="SemiBold" FontSize="14"
-                                       Command="{Binding OpenSettingsCommand}"/>
-                            <ui:Button Content="{Binding StatusButtonText}"
-                                       Appearance="{Binding StatusButtonAppearance}"
-                                       Width="110" Height="{Binding StatusButtonHeight}"
-                                       Padding="0"
-                                       VerticalAlignment="Center"
-                                       FontWeight="SemiBold" FontSize="14"
-                                       Command="{Binding ToggleServerCommand}"/>
-                        </StackPanel>
-                    </Grid>
-                </Border>
-
-                <!-- 卡片 2: 共享目录列表 -->
-                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,0,14">
-                    <StackPanel>
-                        <!-- 顶栏与添加按钮 -->
-                        <Grid Margin="0,0,0,12">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <TextBlock Grid.Column="0" Text="共享目录" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                            <ui:Button Grid.Column="1" Content="+ 新建共享" Appearance="Secondary" Click="BtnAddShare_Click"/>
-                        </Grid>
-
-                        <!-- 暂无共享提示 -->
-                        <TextBlock Text="暂无共享目录，请点击右上角新建共享"
-                                   Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                   FontSize="12" FontStyle="Italic" Margin="0,4,0,4"
-                                   Visibility="{Binding HasShares, Converter={x:Static local:Converters.InverseBoolToVisible}}"/>
-
-                        <!-- 共享项列表 -->
-                        <ItemsControl ItemsSource="{Binding Shares}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="14,10" Margin="0,0,0,8">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-
-                                            <StackPanel Grid.Column="0">
-                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,4">
-                                                    <TextBlock Text="{Binding ShareName}" FontSize="15" FontWeight="Bold" VerticalAlignment="Center" Margin="0,0,10,0"/>
-                                                    
-                                                    <Border Background="#3B82F6" CornerRadius="3" Padding="5,1" Margin="0,0,5,0" Visibility="{Binding IsReadOnly, Converter={x:Static local:Converters.InverseBoolToVisible}}">
-                                                        <TextBlock Text="读写" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
-                                                    </Border>
-                                                    <Border Background="#EF4444" CornerRadius="3" Padding="5,1" Margin="0,0,5,0" Visibility="{Binding IsReadOnly, Converter={x:Static local:Converters.BoolToVisible}}">
-                                                        <TextBlock Text="只读" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
-                                                    </Border>
-                                                    <Border Background="#10B981" CornerRadius="3" Padding="5,1" Margin="0,0,5,0" Visibility="{Binding AllowGuest, Converter={x:Static local:Converters.BoolToVisible}}">
-                                                        <TextBlock Text="匿名访问" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
-                                                    </Border>
-                                                    <Border Background="#8B5CF6" CornerRadius="3" Padding="5,1" Visibility="{Binding EnableSmb1, Converter={x:Static local:Converters.BoolToVisible}}">
-                                                        <TextBlock Text="兼容旧协议设备" Foreground="White" FontSize="10" FontWeight="SemiBold"/>
-                                                    </Border>
-                                                </StackPanel>
-
-                                                <TextBlock Text="{Binding LocalPath}" FontFamily="Consolas" FontSize="12" Foreground="{DynamicResource TextFillColorSecondaryBrush}" Margin="0,0,0,2"/>
-                                                <TextBlock Text="{Binding Description}" FontSize="11" Foreground="{DynamicResource TextFillColorTertiaryBrush}"/>
-                                            </StackPanel>
-
-                                            <!-- 操作 -->
-                                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
-                                                <ui:Button Content="浏览" Appearance="Secondary" Margin="0,0,6,0" Command="{Binding DataContext.OpenShareFolderCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding LocalPath}"/>
-                                                <ui:Button Content="编辑" Appearance="Secondary" Margin="0,0,6,0" Command="{Binding DataContext.EditShareCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"/>
-                                                <ui:Button Content="移除" Appearance="Secondary" Command="{Binding DataContext.DeleteShareCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"/>
-                                            </StackPanel>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-
-                <!-- 卡片 3: 局域网访问地址 -->
-                <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18"
-                        Visibility="{Binding HasShares, Converter={x:Static local:Converters.BoolToVisible}}">
-                    <StackPanel>
-                        <TextBlock Text="局域网连接地址" FontSize="14" FontWeight="SemiBold" Margin="0,0,0,10"/>
-
-                        <ItemsControl ItemsSource="{Binding UncAddresses}">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="12,8" Margin="0,0,0,6">
-                                        <Grid>
-                                            <Grid.ColumnDefinitions>
-                                                <ColumnDefinition Width="*"/>
-                                                <ColumnDefinition Width="Auto"/>
-                                            </Grid.ColumnDefinitions>
-                                            <TextBlock Grid.Column="0" Text="{Binding}" FontFamily="Consolas" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                                            <ui:Button Grid.Column="1" Content="复制地址" Appearance="Secondary" Command="{Binding DataContext.CopyUncCommand, RelativeSource={RelativeSource AncestorType=ItemsControl}}" CommandParameter="{Binding}"/>
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </StackPanel>
-                </Border>
-            </StackPanel>
-        </ScrollViewer>
-
-        <!-- 设置页面内容区 -->
-        <Grid Grid.Row="1"
-              Margin="18,4,4,18"
-              Visibility="{Binding IsSettingsPageOpen, Converter={x:Static local:Converters.BoolToVisible}}">
-            <Grid.RowDefinitions>
-                <!-- 设置页固定顶栏 -->
-                <RowDefinition Height="Auto"/>
-                <!-- 设置页滚动内容区 -->
-                <RowDefinition Height="*"/>
-            </Grid.RowDefinitions>
-
-            <!-- 设置页顶栏：返回按钮与标题（固定不随滚动条滑动） -->
-            <Grid Grid.Row="0" Margin="0,0,14,14">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
-                <ui:Button Grid.Column="0"
-                           Content="← 返回主页"
-                           Appearance="Secondary"
-                           Padding="14,7"
-                           FontWeight="SemiBold"
-                           Command="{Binding CloseSettingsCommand}"/>
-                <TextBlock Grid.Column="1"
-                           Text="软件设置"
-                           FontSize="17"
-                           FontWeight="Bold"
-                           VerticalAlignment="Center"
-                           Margin="14,0,0,0"/>
+                <!-- 底部服务状态 -->
+                <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="12,0,0,0" DataContext="{Binding Shares}" ToolTip="{Binding StatusDetail}">
+                    <Ellipse Width="8" Height="8" VerticalAlignment="Center" Margin="0,0,8,0">
+                        <Ellipse.Style>
+                            <Style TargetType="Ellipse">
+                                <Setter Property="Fill" Value="{StaticResource MutedBrush}"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsRunning}" Value="True">
+                                        <Setter Property="Fill" Value="{StaticResource SuccessBrush}"/>
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsBusy}" Value="True">
+                                        <Setter Property="Fill" Value="{StaticResource WarningBrush}"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Ellipse.Style>
+                    </Ellipse>
+                    <TextBlock Text="{Binding StatusText}" Style="{StaticResource CaptionText}" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
             </Grid>
 
-            <!-- 设置页卡片滚动区 -->
-            <ScrollViewer Grid.Row="1"
-                          VerticalScrollBarVisibility="Auto">
-                <StackPanel Margin="0,0,14,0">
-                    <!-- 设置卡片 1: 开机自启动 -->
-                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,0,14">
-                        <StackPanel>
-                            <TextBlock Text="启动与常驻" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
-
-                            <!-- 开机自启动选项 -->
-                            <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="14,12" Margin="0,0,0,10">
-                                <StackPanel>
-                                    <CheckBox Content="开机自动启动 UniShare"
-                                              IsChecked="{Binding IsAutoStart, Mode=TwoWay}"
-                                              FontWeight="SemiBold"
-                                              Margin="0,0,0,4"/>
-                                    <TextBlock Text="启动时以后台模式运行，不显示程序面板，点击桌面图标可调出主界面。"
-                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                               FontSize="11"
-                                               TextWrapping="Wrap"
-                                               Margin="26,0,0,0"/>
-                                </StackPanel>
-                            </Border>
-
-                            <!-- 自启动状态提示 -->
-                            <TextBlock Text="{Binding AutoStartStatusText}"
-                                       Foreground="{DynamicResource TextFillColorSecondaryBrush}"
-                                       FontSize="12"
-                                       Margin="4,2,0,0"/>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- 设置卡片 2: 局域网设备自发现 -->
-                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,0,14">
-                        <StackPanel>
-                            <TextBlock Text="局域网设备自发现" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,12"/>
-
-                            <Border Background="{DynamicResource SubtleFillColorSecondaryBrush}" CornerRadius="6" Padding="14,12">
-                                <StackPanel>
-                                    <CheckBox Content="开启局域网设备自发现 (NetBIOS / mDNS / WS-Discovery)"
-                                              IsChecked="{Binding IsNetworkDiscoveryEnabled, Mode=TwoWay}"
-                                              FontWeight="SemiBold"
-                                              Margin="0,0,0,4"/>
-                                    <TextBlock Text="允许局域网内的手机、电脑等设备自动发现本机，无需手动输入 IP。"
-                                               Foreground="{DynamicResource TextFillColorTertiaryBrush}"
-                                               FontSize="11"
-                                               TextWrapping="Wrap"
-                                               Margin="26,0,0,0"/>
-                                </StackPanel>
-                            </Border>
-                        </StackPanel>
-                    </Border>
-
-                    <!-- 设置卡片 3: 关于 -->
-                    <Border Background="{DynamicResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{DynamicResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8" Padding="18">
-                        <StackPanel>
-                            <TextBlock Text="关于" FontSize="15" FontWeight="SemiBold" Margin="0,0,0,8"/>
-                            <TextBlock Foreground="{DynamicResource TextFillColorSecondaryBrush}" FontSize="12">
-                                <Run Text="版本："/>
-                                <Run Text="{Binding AppVersion, Mode=OneWay}"/>
-                            </TextBlock>
-                        </StackPanel>
-                    </Border>
-                </StackPanel>
-            </ScrollViewer>
+            <!-- 页面内容区 -->
+            <Border Grid.Column="1"
+                    Background="{StaticResource PageBackgroundBrush}"
+                    BorderBrush="{StaticResource CardBorderBrush}"
+                    BorderThickness="1,1,0,0"
+                    CornerRadius="8,0,0,0">
+                <ContentControl Content="{Binding CurrentPage}" Focusable="False"/>
+            </Border>
         </Grid>
     </Grid>
 </ui:FluentWindow>

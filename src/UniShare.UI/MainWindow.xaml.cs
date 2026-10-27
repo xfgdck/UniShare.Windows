@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Interop;
 using UniShare.UI.Helpers;
+using UniShare.UI.Services;
 using UniShare.UI.ViewModels;
 using UniShare.UI.Views;
 using Wpf.Ui.Controls;
@@ -44,12 +45,14 @@ namespace UniShare.UI
         private bool m_isExplicitExit = false;
         private bool m_isInitializedPort = false;
 
-        public MainViewModel ViewModel => (MainViewModel)DataContext;
+        public ShellViewModel ViewModel => (ShellViewModel)DataContext;
+
+        private ServerHost Host => ViewModel.Host;
 
         public MainWindow(bool startMinimized = false)
         {
             InitializeComponent();
-            DataContext = new MainViewModel();
+            DataContext = new ShellViewModel(new DialogService());
 
             // 预先确保 HWND 句柄创建，并将托盘图标直接与 Win32 消息循环绑定
             var helper = new WindowInteropHelper(this);
@@ -79,17 +82,17 @@ namespace UniShare.UI
             {
                 EnsureTrayIconRegistered();
 
-                if (!string.IsNullOrEmpty(ViewModel.StartupWarning))
+                if (!string.IsNullOrEmpty(Host.StartupWarning))
                 {
-                    string warning = ViewModel.StartupWarning;
-                    ViewModel.StartupWarning = null;
+                    string warning = Host.StartupWarning;
+                    Host.StartupWarning = null;
                     MessageDialog.ShowWarning(warning, "配置文件提示", owner: this);
                 }
 
                 if (!m_isInitializedPort)
                 {
                     m_isInitializedPort = true;
-                    await ViewModel.InitializeStartupPortAsync();
+                    await Host.InitializeStartupPortAsync();
                 }
             };
         }
@@ -107,7 +110,7 @@ namespace UniShare.UI
             if (!m_isInitializedPort)
             {
                 m_isInitializedPort = true;
-                _ = ViewModel.InitializeStartupPortAsync();
+                _ = Host.InitializeStartupPortAsync();
             }
         }
 
@@ -136,19 +139,6 @@ namespace UniShare.UI
             return IntPtr.Zero;
         }
 
-        private void BtnAddShare_Click(object sender, RoutedEventArgs e)
-        {
-            var dialog = new AddShareDialog(null, ViewModel.Shares)
-            {
-                Owner = this
-            };
-
-            if (dialog.ShowDialog() == true && dialog.Result != null)
-            {
-                ViewModel.AddShare(dialog.Result);
-            }
-        }
-
         private void MainWindow_Closing(object sender, CancelEventArgs e)
         {
             if (!m_isExplicitExit)
@@ -162,21 +152,21 @@ namespace UniShare.UI
 
         private void TrayOpen_Click(object sender, RoutedEventArgs e)
         {
-            ViewModel.IsSettingsPageOpen = false;
+            ViewModel.NavigateToShares();
             RestoreAndActivate();
         }
 
         private void TrayExit_Click(object sender, RoutedEventArgs e)
         {
             // 服务启停 / 端口接管进行中时退出，可能在系统服务还原的同时仍有新引擎绑定 445 端口
-            if (ViewModel.IsBusy)
+            if (Host.IsBusy)
             {
-                MessageDialog.ShowInfo($"正在处理：{ViewModel.BusyMessage}\n请稍候完成后再退出程序。", "请稍候");
+                MessageDialog.ShowInfo($"{Host.BusyMessage}，请稍候完成后再退出程序。", "请稍候");
                 return;
             }
 
             bool confirmed = MessageDialog.ShowConfirm(
-                "确定要退出 UniShare 吗？\n退出时将解除 445 端口绑定并还原 Windows 系统原生共享驱动。",
+                "确定要退出 UniShare 吗？\n退出后局域网设备将无法访问共享。",
                 "退出确认",
                 confirmText: "退出程序",
                 cancelText: "取消",
@@ -190,7 +180,7 @@ namespace UniShare.UI
                     MyNotifyIcon.Unregister();
                 }
                 catch { }
-                ViewModel.ShutdownAndRestore();
+                Host.ShutdownAndRestore();
                 Application.Current.Shutdown();
             }
         }

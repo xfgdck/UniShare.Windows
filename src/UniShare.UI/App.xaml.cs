@@ -21,7 +21,7 @@ namespace UniShare.UI
             {
                 try
                 {
-                    ViewModels.MainViewModel.RestoreSystemSmbFromConfig();
+                    Services.ServerHost.RestoreSystemSmbFromConfig();
                 }
                 catch (Exception ex)
                 {
@@ -51,7 +51,7 @@ namespace UniShare.UI
                 }
 
                 MessageDialog.ShowWarning(
-                    "UniShare 需要管理员权限以绑定标准 TCP 445 端口并接管共享服务驱动。\n请在 UAC 提权提示中选择“是”。",
+                    "UniShare 需要管理员权限才能提供文件共享服务。\n请在弹出的权限提示中选择“是”。",
                     "需要管理员权限");
 
                 Shutdown();
@@ -109,9 +109,9 @@ namespace UniShare.UI
                 // 进程即将终止：尽力还原系统共享服务，避免 Windows 原生共享一直处于禁用状态
                 try
                 {
-                    if (MainWindow?.DataContext is ViewModels.MainViewModel vm)
+                    if (MainWindow?.DataContext is ViewModels.ShellViewModel shell)
                     {
-                        vm.ShutdownAndRestore();
+                        shell.Host.ShutdownAndRestore();
                     }
                 }
                 catch { }
@@ -122,9 +122,9 @@ namespace UniShare.UI
         {
             SingleInstanceHelper.Cleanup();
 
-            if (MainWindow is MainWindow mw && mw.DataContext is ViewModels.MainViewModel vm)
+            if (MainWindow is MainWindow mw && mw.DataContext is ViewModels.ShellViewModel shell)
             {
-                vm.ShutdownAndRestore();
+                shell.Host.ShutdownAndRestore();
             }
             base.OnExit(e);
         }

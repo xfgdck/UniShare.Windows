@@ -75,18 +75,26 @@ UniShare.Windows/
     │   └── Program.cs
     └── UniShare.UI\                    # WPF 现代桌面客户端（主交付工程，生成 UniShare.exe）
         ├── App.xaml / App.xaml.cs      # 应用入口，单实例检测，支持 --minimized 命令行静默启动参数
-        ├── MainWindow.xaml / .cs       # 主窗口（左侧导航栏：共享管理 + 应用设置、系统托盘管理、前台唤醒）
-        ├── Helpers\
-        │   ├── SingleInstanceHelper.cs # 全局 Mutex 与命名事件单实例互斥，唤醒已存实例至前台
+        ├── MainWindow.xaml / .cs       # 外壳窗口：左侧窄导航（共享 / 设置 / 关于）+ 页面内容区、系统托盘、前台唤醒
+        ├── Resources        │   └── Theme.xaml              # 固定浅色主题的语义色、字号、卡片 / 标签 / 导航项等共用样式
+        ├── Services        │   ├── ServerHost.cs           # 服务宿主：配置、引擎、445 端口、启停与热重载（串行化）、共享增删改、网络变化、退出还原
+        │   ├── IDialogService.cs       # 弹窗抽象与 MessageDialog 实现，视图模型通过它弹窗 / 选文件夹 / 打开共享编辑框
+        │   └── UpdateChecker.cs        # 手动检查更新：查询 GitHub Releases 最新版本（不做自动检查）
+        ├── Helpers        │   ├── SingleInstanceHelper.cs # 全局 Mutex 与命名事件单实例互斥，唤醒已存实例至前台
         │   ├── AutoStartHelper.cs      # 基于 Windows 任务计划程序 (HighestAvailable) 的免弹窗开机自启
-        │   ├── ClipboardHelper.cs      # Win32 底层重试与降级防崩溃剪贴板写入工具（杜绝 0x800401D0 崩溃）
         │   └── NetworkHelper.cs        # 网卡 IP 查询与展示工具
-        ├── ViewModels\
-        │   ├── MainViewModel.cs        # 主界面状态、服务启停（串行化）、共享增删改、445 端口联动、网络变化刷新
+        ├── ViewModels        │   ├── ShellViewModel.cs       # 导航项与当前页面，创建 ServerHost 及各页面视图模型
+        │   ├── SharesViewModel.cs      # “共享”页：状态横幅与启停、共享列表、新建 / 编辑 / 移除 / 打开
+        │   ├── ShareItemViewModel.cs   # 共享卡片：标签、图标色块编号
+        │   ├── ShareEditorViewModel.cs # 新建 / 编辑共享表单、保存前校验与结果生成
+        │   ├── SettingsViewModel.cs    # “设置”页：开机自启、局域网自发现
+        │   ├── AboutViewModel.cs       # “关于”页：版本号、手动检查更新、打开 GitHub 项目主页
         │   ├── ViewModelBase.cs        # INotifyPropertyChanged 基类
         │   └── RelayCommand.cs         # UI 线程直接调度的 ICommand 实现
-        └── Views\
-            ├── AddShareDialog.xaml/.cs # 新建/编辑共享弹窗（三段式卡片布局与完备防呆校验）
+        └── Views            ├── Pages\SharesPage.xaml   # “共享”页视图
+            ├── Pages\SettingsPage.xaml # “设置”页视图（CardControl + ToggleSwitch）
+            ├── Pages\AboutPage.xaml    # “关于”页视图
+            ├── ShareEditorDialog.xaml  # 新建 / 编辑共享对话框（绑定 ShareEditorViewModel）
             └── MessageDialog.xaml/.cs  # 自定义 Fluent 模态消息/确认弹窗（替代原生 MessageBox）
 ```
 
@@ -102,17 +110,17 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   5. 轮询 `CanBindPort(445)` 确认端口真正释放。
 * **原始状态记录 (`CaptureSystemSmbState`)**：首次改动系统服务前，从注册表 `HKLM\SYSTEM\CurrentControlSet\Services\LanmanServer` 读取 `Start` / `DelayedAutostart` 及当前运行状态，持久化到 `ServerConfig.SystemSmbBackup`（异常退出后仍保留，下次启动不会重复记录）。端口本就空闲时不改动、不记录、不还原。
 * **按原样还原 (`RestoreSystemSmb`)**：`sc config LanmanServer start= <原启动类型>`；仅当原本处于运行状态时才依次 `start srvnet / srv2 / LanmanServer`。原本禁用/停止的保持原样。还原后清空记录。
-* **生命周期联动**（[`MainViewModel.cs`](src/UniShare.UI/ViewModels/MainViewModel.cs)）：
+* **生命周期联动**（[`ServerHost.cs`](src/UniShare.UI/Services/ServerHost.cs)）：
   * 软件启动即接管 445；“停止服务”**不还原**，445 由 `PortReservation` 继续持有，防止系统驱动重新夺取；
   * 退出程序（托盘退出 / 注销关机 `OnExit`）以及致命未处理异常（`AppDomain.UnhandledException`）时还原；`ShutdownAndRestore` 幂等，仅首次生效；
   * 卸载时安装包调用 `UniShare.exe --restore-system-smb`（无界面还原模式）按记录还原；
   * 从旧版本升级（检测到安装目录旧配置迁移）且 LanmanServer 处于禁用时，视为旧版本遗留，按系统默认（自动+运行）还原。
 
-#### 2. 共享权限与防呆校验机制 ([`SmbServerEngine.cs`](src/UniShare.Core/SmbServerEngine.cs) & [`AddShareDialog.xaml.cs`](src/UniShare.UI/Views/AddShareDialog.xaml.cs))
+#### 2. 共享权限与防呆校验机制 ([`SmbServerEngine.cs`](src/UniShare.Core/SmbServerEngine.cs) & [`ShareEditorViewModel.cs`](src/UniShare.UI/ViewModels/ShareEditorViewModel.cs))
 * **默认安全策略**：新建共享时默认 `AllowGuest = false`、`EnableSmb1 = false`。
-* **保存前强校验**：
+* **保存前强校验**（路径、名称、访问方式等错误以字段下方红字提示，不再弹窗；只有需要用户决定的情况才弹确认框）：
   * 校验共享名称合法性与唯一性（禁止重名或相同物理路径重复挂载）。
-  * 拦截“未点击添加按钮但用户名输入框仍有残留文本”的误操作，弹窗提醒用户先点击“添加”或清空输入框。
+  * 拦截“未点击添加按钮但用户名输入框仍有残留文本”的误操作，提示用户先点击“添加”或清空输入框。
   * 禁止创建既没有添加任何访问用户、又未开启匿名访问的无权限共享。
   * 共享名禁止 `" / \ [ ] : | < > + = ; , * ?` 及控制字符、长度 ≤ 80，禁止 `IPC$` / `ADMIN$` / `PRINT$` / `X$` 系统保留名；目录不存在时询问是否创建，共享整个磁盘分区时二次确认；添加空密码用户时提示 Windows 客户端默认拒绝空密码网络登录。
   * **同名用户密码一致性**：NTLM 认证发生在 TreeConnect（选择共享）之前，同一用户名在所有共享中只能有一个密码。对话框通过 `ShareAccessEvaluator.FindPasswordConflict` 拦截同名不同密码；引擎遇到遗留冲突数据时保留首个密码并记录 Error 日志。
@@ -120,7 +128,7 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   * 回调只携带共享名与挂载路径，每次请求都从引擎当前的 `m_activeShares` 表查询最新配置，再交给 `ShareAccessEvaluator.Evaluate` 判定。因此热重载后**已建立 TreeConnect 的旧连接也立即按新权限判定**；共享被移除或物理路径变更后，旧连接的访问一律拒绝。
   * 认证回调 `GetUserPasswordHandler`：已知用户返回密码；未知用户返回 `null`——存在开放匿名的共享时由协议栈建立 Guest 会话（用户名 `Guest`，按各共享匿名权限判定），否则 `LOGON_FAILURE`。
   * `IsReadOnly` 属性根据用户列表和匿名开关的综合写权限自动计算，用于 UI 状态徽章展示。
-* **热重载与服务操作串行化**：引擎始终使用 `ConfigManager.Clone` 生成的配置快照；SMB 1.0 开关变化无法热重载（`ReloadConfig` 返回 false），自动改为重启服务。`MainViewModel` 中所有启动/停止/重启/热重载经 `SemaphoreSlim` 串行执行（`RunServiceOperationAsync`），忙碌期间的增删改共享会排队生效而不会被丢弃。引擎不再自动创建缺失的共享目录（移动硬盘未接入时跳过挂载并记录警告）。
+* **热重载与服务操作串行化**：引擎始终使用 `ConfigManager.Clone` 生成的配置快照；SMB 1.0 开关变化无法热重载（`ReloadConfig` 返回 false），自动改为重启服务。`ServerHost` 中所有启动/停止/重启/热重载经 `SemaphoreSlim` 串行执行（`RunServiceOperationAsync`），忙碌期间的增删改共享会排队生效而不会被丢弃。引擎不再自动创建缺失的共享目录（移动硬盘未接入时跳过挂载并记录警告）。
 
 #### 3. 配置存储、服务状态记忆与免 UAC 开机自启 ([`ConfigManager.cs`](src/UniShare.Core/ConfigManager.cs) & [`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs))
 * **配置位置与安全**：`%ProgramData%\UniShare\config.json`，目录 ACL 仅 SYSTEM 与 Administrators 可访问，所有者强制改为 Administrators（防止普通用户抢先创建目录后凭所有者身份改回 ACL），目录为符号链接/联接点时拒绝写入；密码无法解密（如配置复制自其他电脑）时置空并弹窗列出受影响用户，不会被当作配置损坏而重置；密码以 DPAPI (LocalMachine + 固定熵) 加密存为 `PasswordProtected`，内存中仍为明文 `Password`；写入采用临时文件原子替换。首次运行自动迁移安装目录下的旧版 `config.json` 并删除旧文件；旧版明文密码加载后立即加密重写。
@@ -128,14 +136,18 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
 * **运行状态持久化**：`ServerConfig.IsServiceEnabled` 记录用户最后一次是处于“启动”还是“停止”状态，软件重启后自动按上次状态恢复。
 * **任务计划自启**：因本程序需要 `requireAdministrator` 权限以管理 445 端口，普通注册表 `Run` 键自启会被 Windows 拦截。[`AutoStartHelper.cs`](src/UniShare.UI/Helpers/AutoStartHelper.cs) 通过生成 UTF-16 XML 并调用 `schtasks /Create /TN "UniShare_AutoStart" /XML ... /F` 注册 `HighestAvailable` 登录触发任务，实现免 UAC 弹窗静默开机自启（支持传入 `--minimized` 直接驻留托盘）。触发器与 Principal 均指定当前用户 `UserId`，避免其他用户登录时误触发。
 * **防火墙**：系统“文件和打印机共享”规则只放行 System 进程，因此安装包与程序启动时（`FirewallHelper.EnsureRules`，路径不一致则重建）添加 `UniShare` 程序入站规则及 `UniShare WSD Metadata`（TCP 5357/5358/5359/8765，http.sys 承载）端口规则，作用于所有网络类型（域 / 专用 / 公用）。Windows 连接新网络时默认标记为“公用网络”，若只放行专用网络，家庭网络常被静默拦截，因此按产品决策不做区分；程序启动时会把旧版本创建的“仅专用 / 域”规则统一更新为所有网络类型。卸载时删除。
-* **网络变化**：订阅 `NetworkChange` 事件，合并 2 秒后刷新界面地址列表，并重启自发现服务以重新加入各网卡多播组、宣告新地址。引擎内自发现的启动、停止、开关与刷新由同一把锁串行化，保证服务停止后不会被延迟启动或刷新重新拉起。网卡地址查询带 5 秒缓存（网络变化时失效）。
+* **网络变化**：订阅 `NetworkChange` 事件，合并 2 秒后刷新网卡列表，并重启自发现服务以重新加入各网卡多播组、宣告新地址。引擎内自发现的启动、停止、开关与刷新由同一把锁串行化，保证服务停止后不会被延迟启动或刷新重新拉起。网卡地址查询带 5 秒缓存（网络变化时失效）。
 * **退出保护**：服务操作进行中时托盘“退出”会提示稍候，避免还原系统服务的同时仍有新引擎绑定 445。
 
 #### 4. UI 规范与细节约定
+* **分层约定**：页面只绑定视图模型；视图模型通过 `ServerHost` 操作服务、通过 `IDialogService` 弹窗，不直接创建窗口或调用 `MessageDialog`。界面不展示运行日志，`ServerHost.Log` 仅输出到调试器，未处理异常仍由 `CrashLogger` 落盘。
+* **主题与样式**：固定浅色主题（`ThemesDictionary Theme="Light"`）。颜色、字号、卡片、标签、导航项统一定义在 [`Theme.xaml`](src/UniShare.UI/Resources/Theme.xaml)，页面中不写死十六进制颜色。整体为“柔和色块”风格：浅灰画布 + 白色 12px 圆角卡片；“共享”页顶部是随状态变色的横幅（开启绿 / 关闭灰 / 处理中琥珀），共享目录为一张卡片：灰色表头（标题、数量、浅色“新建共享”按钮）+ 白色列表行（行首图标色块按共享名稳定轮换五种颜色），打开 / 编辑 / 移除收在每行“⋯”菜单；设置与关于页为“图标色块 + 标题 + 右侧控件”的行；新建 / 编辑共享弹窗保持原有的文字与布局（分区卡片 + 复选框，校验以弹窗提示），仅配色跟随主题。标签语义：可读写用蓝色、匿名访问用琥珀色提醒、只读与兼容旧设备用中性灰。
+* **面向普通用户的文案**：界面（含状态栏、弹窗、标签）不出现端口号、TCP、SMB 版本、驱动、NetBIOS/mDNS 等技术术语，用“共享服务”“兼容老旧设备”等通俗说法；启动失败等技术细节写入 `crash.log`，界面只提示处理办法。设置项尽量不加说明小字。
+* **检查更新**：仅在“关于”页由用户手动点击检查，程序不做任何自动检查或后台联网。
 * **去品牌化文案**：界面所有描述文本严禁出现特定硬件品牌名（如海康、萤石、小米、Mac 等），统一使用通用设备表述（如“手机、电脑、智能电视等设备”、“兼容旧协议设备”）。
-* **弹窗统一**：所有提示与确认弹窗均使用 [`MessageDialog`](src/UniShare.UI/Views/MessageDialog.xaml.cs)（轻提示如“复制成功”使用无按钮、超时自动关闭的 `MessageDialog.ShowToast`），禁止直接调用系统原生 `System.Windows.MessageBox.Show`。
+* **弹窗统一**：所有提示与确认弹窗均使用 [`MessageDialog`](src/UniShare.UI/Views/MessageDialog.xaml.cs)（轻提示使用无按钮、超时自动关闭的 `MessageDialog.ShowToast`），禁止直接调用系统原生 `System.Windows.MessageBox.Show`。
 * **滚动条与边框间距**：在包含卡片边框的 `ScrollViewer` 中，外层 `ScrollViewer` 与内层容器需分离右侧 `Margin`/`Padding`，防止悬浮滚动条遮挡卡片圆角右边框。
-* **按钮即时响应与视觉权重**：[`RelayCommand.cs`](src/UniShare.UI/ViewModels/RelayCommand.cs) 直接维护事件处理器并通过 `Application.Current.Dispatcher` 触发 `RaiseCanExecuteChanged`，避免后台任务切换 `IsBusy` 时按钮状态延迟刷新；主界面“停止服务”与列表项“移除”等低频操作统一采用低调的 `Secondary` 次级样式，仅在二次确认弹窗中使用 `Danger` 警示色，避免大面积红色喧宾夺主。
+* **按钮即时响应与视觉权重**：[`RelayCommand.cs`](src/UniShare.UI/ViewModels/RelayCommand.cs) 直接维护事件处理器并通过 `Application.Current.Dispatcher` 触发 `RaiseCanExecuteChanged`，避免后台任务切换 `IsBusy` 时按钮状态延迟刷新；状态横幅中“关闭共享”采用 `Secondary` 次级样式、“开启共享”为 `Primary`，共享卡片“移除”收在“⋯”菜单中防止误点，仅在二次确认弹窗中使用 `Danger` 警示色，避免大面积红色喧宾夺主。
 * **应用图标与视觉统一**：应用图标为原创几何飞鸟设计（象牙白身躯、松青羽翼配暖琥珀衬色、珊瑚红眼点、嘴衔分叉小树枝与嫩芽），采用 22% 圆角的纯白底座（小鸟图案等比例放大至底座边界，左右两侧完全无缝隙贴边，搭配细腻边界与柔和底阴影，在明暗主题下均清晰扎实），包含 16×16 至 256×256 完整分辨率，位于 [`icon.ico`](src/UniShare.UI/Assets/icon.ico)。
 
 
@@ -254,7 +266,7 @@ Windows 下 TCP 445 端口由 `LanmanServer` 及内核驱动 `srv2.sys`、`srvne
   * [x] 实现 `FileSystemShare.AccessRequested` 细粒度读写权限拦截与服务启停状态记忆。
 * [x] **阶段三：现代化原生桌面 GUI (`UniShare.UI`) (已完成)**
   * [x] 基于 WPF + `WPF-UI` 打造 Fluent 深色视觉主界面与侧边栏导航（共享管理 / 应用设置）。
-  * [x] 服务一键启停（自动联动 445 端口接管与释放还原）、网卡 IP 切换与地址一键复制。
+  * [x] 服务一键启停（自动联动 445 端口接管与释放还原）、网卡 IP 切换自动适配。
   * [x] 三段式新建/编辑共享对话框、完整的输入防呆校验与统一的 Fluent `MessageDialog` 模态弹窗。
   * [x] 基于 Windows 任务计划程序的免 UAC 弹窗开机自启及系统托盘后台常驻。
 * [x] **阶段四：长期稳定性实测与局域网发现增强 (已完成)**

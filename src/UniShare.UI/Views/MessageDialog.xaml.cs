@@ -59,44 +59,44 @@ namespace UniShare.UI.Views
             {
                 case DialogTone.Success:
                     TxtIconSymbol.Text = "✓";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(16, 185, 129)); // #10B981
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 16, 185, 129));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(15, 123, 15)); // #0F7B0F
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 15, 123, 15));
                     BtnConfirm.Appearance = ControlAppearance.Primary;
                     break;
 
                 case DialogTone.Warning:
                     TxtIconSymbol.Text = "!";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(245, 158, 11)); // #F59E0B
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 245, 158, 11));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(157, 93, 0)); // #9D5D00
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 157, 93, 0));
                     BtnConfirm.Appearance = ControlAppearance.Primary;
                     break;
 
                 case DialogTone.Error:
                     TxtIconSymbol.Text = "✕";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // #EF4444
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 239, 68, 68));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(196, 43, 28)); // #C42B1C
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 196, 43, 28));
                     BtnConfirm.Appearance = ControlAppearance.Primary;
                     break;
 
                 case DialogTone.Confirm:
                     TxtIconSymbol.Text = "?";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(59, 130, 246)); // #3B82F6
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 59, 130, 246));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(0, 95, 184)); // #005FB8
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 0, 95, 184));
                     BtnConfirm.Appearance = ControlAppearance.Primary;
                     break;
 
                 case DialogTone.DangerConfirm:
                     TxtIconSymbol.Text = "!";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(239, 68, 68)); // #EF4444
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 239, 68, 68));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(196, 43, 28)); // #C42B1C
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 196, 43, 28));
                     BtnConfirm.Appearance = ControlAppearance.Danger;
                     break;
 
                 case DialogTone.Info:
                 default:
                     TxtIconSymbol.Text = "i";
-                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(59, 130, 246)); // #3B82F6
-                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 59, 130, 246));
+                    TxtIconSymbol.Foreground = new SolidColorBrush(Color.FromRgb(0, 95, 184)); // #005FB8
+                    IconBadge.Background = new SolidColorBrush(Color.FromArgb(30, 0, 95, 184));
                     BtnConfirm.Appearance = ControlAppearance.Primary;
                     break;
             }
@@ -209,7 +209,7 @@ namespace UniShare.UI.Views
                     Width = 22,
                     Height = 22,
                     CornerRadius = new CornerRadius(11),
-                    Background = new SolidColorBrush(Color.FromArgb(40, 16, 185, 129)),
+                    Background = new SolidColorBrush(Color.FromArgb(40, 15, 123, 15)),
                     VerticalAlignment = VerticalAlignment.Center,
                     Margin = new Thickness(0, 0, 8, 0),
                     Child = new System.Windows.Controls.TextBlock
@@ -217,7 +217,7 @@ namespace UniShare.UI.Views
                         Text = "✓",
                         FontSize = 13,
                         FontWeight = FontWeights.Bold,
-                        Foreground = new SolidColorBrush(Color.FromRgb(16, 185, 129)),
+                        Foreground = new SolidColorBrush(Color.FromRgb(15, 123, 15)),
                         HorizontalAlignment = HorizontalAlignment.Center,
                         VerticalAlignment = VerticalAlignment.Center
                     }
